@@ -50,7 +50,10 @@ const float arrowGap = 20.0f;
 const float arrowBobHeight = 4.0f;
 const float arrowSize = 0.5f;
 const Uint8 selectFillAlpha = 153;
-const float grassSize = 0.8f;
+const float grassSize = 0.75f;
+const int clumpCount = 60;
+const int clumpTries = 30;
+const float clumpMargin = 24.0f;
 
 struct Footprint {
     Vector2D<float> pos;
@@ -64,16 +67,23 @@ static Vector2D<float> cameraPx()
     return {std::floor(camera.x), std::floor(camera.y)};
 }
 
+float density = 1.0f;
 float zoom = 1.0f;
-const float zoomStep = 1.1f;
-const float zoomMin = 0.5f;
-const float zoomMax = 4.0f;
+float wheelTotal = 0.0f;
+const float zoomMaxPerDensity = 4.0f;
+// render: sprites were blurry because the window drew at half resolution and zoom was fractional; density is real screen pixels per window point (2 on Retina), and zoom is a whole number of real screen pixels per map px, so every sprite pixel covers whole screen pixels
+
+static Vector2D<float> toPixels(const float x, const float y)
+{
+    return {x * density, y * density};
+}
+// input: mouse events arrive in window points but the game now works in real pixels; a point is multiplied by density
 
 static Vector2D<float> viewSize(const Vector2D<float> viewport)
 {
     return {viewport.x / zoom, viewport.y / zoom};
 }
-// camera: zoom changes how much map fits on screen; zoom 1 is the default size, and the visible map area is the window size divided by zoom
+// camera: zoom changes how much map fits on screen; the default zoom equals density, and the visible map area is the window size in real pixels divided by zoom
 
 static Vector2D<float> toMap(const Vector2D<float> screen)
 {
@@ -91,38 +101,48 @@ static void clampCamera(const Vector2D<float> viewport)
 
 static void moveCamera(const Vector2D<float> viewport, const float deltaTime)
 {
-    const float step = cameraSpeed * deltaTime / zoom;
+    const float step = cameraSpeed * density * deltaTime / zoom;
+    const float margin = edgeMargin * density;
 
-    if (mouse.x <= edgeMargin) camera.x -= step;
-    if (mouse.x >= viewport.x - 1.0f - edgeMargin) camera.x += step;
-    if (mouse.y <= edgeMargin) camera.y -= step;
-    if (mouse.y >= viewport.y - 1.0f - edgeMargin) camera.y += step;
+    if (mouse.x <= margin) camera.x -= step;
+    if (mouse.x >= viewport.x - 1.0f - margin) camera.x += step;
+    if (mouse.y <= margin) camera.y -= step;
+    if (mouse.y >= viewport.y - 1.0f - margin) camera.y += step;
 
     clampCamera(viewport);
 }
-// camera: edge scroll like League of Legends; cursor within edgeMargin of a window edge moves that axis by cameraSpeed * deltaTime (divided by zoom so screen speed is the same at any zoom), then camera is locked inside the map
+// camera: edge scroll like League of Legends; cursor within edgeMargin points of a window edge moves that axis by cameraSpeed * deltaTime (times density, divided by zoom, so screen speed is the same on any display and zoom), then camera is locked inside the map
+
+static float zoomLowest(const Vector2D<float> viewport)
+{
+    return std::max({1.0f, std::ceil(viewport.x / bgSize.x), std::ceil(viewport.y / bgSize.y)});
+}
 
 static void zoomCamera(const Vector2D<float> viewport, const Vector2D<float> cursor, const float wheel)
 {
-    const float lowest = std::max({zoomMin, viewport.x / bgSize.x, viewport.y / bgSize.y});
+    wheelTotal += wheel;
+    const float levels = std::trunc(wheelTotal);
+    wheelTotal -= levels;
+    if (levels == 0.0f) return;
+
     const float before = zoom;
-    zoom = std::clamp(zoom * std::pow(zoomStep, wheel), lowest, zoomMax);
+    zoom = std::clamp(zoom + levels, zoomLowest(viewport), std::max(zoomLowest(viewport), zoomMaxPerDensity * density));
 
     camera.x += cursor.x / before - cursor.x / zoom;
     camera.y += cursor.y / before - cursor.y / zoom;
     clampCamera(viewport);
 }
-// camera: mouse scroll zooms in and out; each wheel notch multiplies zoom by zoomStep within zoomMin..zoomMax (never so far out that the view is bigger than the map), and the camera shifts so the map point under the cursor stays under it
+// camera: mouse scroll zooms in and out in whole steps so pixels stay sharp; wheel movement is added up and each full notch moves zoom by 1, between 1 (or more, so the view is never bigger than the map) and 4 x density, and the camera shifts so the map point under the cursor stays under it
 
 static bool drawBackground(SDL_Renderer* renderer)
 {
     const Vector2D<float> cam = cameraPx();
     const SDL_FRect map = {-cam.x, -cam.y, bgSize.x, bgSize.y};
 
-    if (!SDL_SetRenderDrawColor(renderer, 145, 215, 96, 255)) return false;
+    if (!SDL_SetRenderDrawColor(renderer, 55, 204, 110, 255)) return false;
     return SDL_RenderFillRect(renderer, &map);
 }
-// render: checkerboard was a placeholder; the whole map is now one #91d760 rectangle shifted by the whole-px camera, and SDL clips the part that is off screen
+// render: checkerboard was a placeholder; the whole map is now one #37cc6e rectangle shifted by the whole-px camera, and SDL clips the part that is off screen
 
 static SDL_Texture* loadSprite(SDL_Renderer* renderer, const char* name)
 {
@@ -207,11 +227,12 @@ static SDL_FRect npcRect(const npc& unit)
     const Vector2D<float> size = unit.getSize();
     return {
         pos.x - size.x * spriteScale / 2.0f,
-        pos.y - size.y * spriteScale / 2.0f,
+        pos.y - size.y * spriteScale,
         size.x * spriteScale,
         size.y * spriteScale,
     };
 }
+// unit: npc pos is now its center bottom (feet) like grass; the npc's rect for clicking and for placing the arrow runs from pos up by the sprite height
 
 static SDL_FRect boxBetween(const Vector2D<float> a, const Vector2D<float> b)
 {
@@ -240,11 +261,11 @@ static bool drawOutline(SDL_Renderer* renderer, SDL_FRect rect)
 
 static std::vector<SDL_Texture*> loadGrassSprites(SDL_Renderer* renderer)
 {
-    SDL_Texture* texture = loadSprite(renderer, "gress1.png");
+    SDL_Texture* texture = loadSprite(renderer, "grassv2.png");
     if (!texture) return {};
     return {texture};
 }
-// assets: clumps should use only the straight strip; gress1.png is the single grass sprite loaded, and the result is empty if it fails
+// assets: the grass strip has a new sprite; grassv2.png (1 x 4) is the single grass sprite loaded, and the result is empty if it fails
 
 struct Drawable {
     SDL_Texture* texture;
@@ -253,29 +274,61 @@ struct Drawable {
     float feet;
 };
 
-static bool addDrawable(std::vector<Drawable>& drawables, SDL_Texture* texture, const Vector2D<float> center, const float size)
+static bool addDrawable(std::vector<Drawable>& drawables, SDL_Texture* texture, const Vector2D<float> feet, const float size)
 {
     float w = 0.0f;
     float h = 0.0f;
     if (!SDL_GetTextureSize(texture, &w, &h)) return false;
 
-    drawables.push_back({texture, center, size, center.y + h * spriteScale * size / 2.0f});
+    drawables.push_back({texture, {feet.x, feet.y - h * spriteScale * size / 2.0f}, size, feet.y});
     return true;
 }
-// render: in this game the lower a thing stands on the map, the more in front it shows; everything standing on the map is queued with the map y of its bottom edge (feet), then sorted by it and drawn top to bottom
+// render: in this game the lower a thing stands on the map, the more in front it shows, and everything standing on the map is positioned by its center bottom (feet); a thing is queued with its sprite half its height above the feet point, then the list is sorted by feet y and drawn top to bottom
 
 static bool addGrassClump(std::vector<Drawable>& drawables, const std::vector<SDL_Texture*>& grassSprites, const GrassClump& clump)
 {
     for (const GrassStrip& strip : clump.strips) {
-        const Vector2D<float> center = {
+        const Vector2D<float> feet = {
             clump.pos.x + strip.offset.x * spriteScale * grassSize,
             clump.pos.y + strip.offset.y * spriteScale * grassSize,
         };
-        if (!addDrawable(drawables, grassSprites[strip.sprite], center, grassSize)) return false;
+        if (!addDrawable(drawables, grassSprites[strip.sprite], feet, grassSize)) return false;
     }
     return true;
 }
-// map: a clump is data only and needs drawing, with strips 20% smaller than other sprites; each strip is queued at grassSize at clump center + offset scaled from sprite px to map px by the same factor, so strips sort against npcs one by one
+// map: a clump is data only and needs drawing, with strips smaller than other sprites; a strip's offset is its center bottom (where the blade meets the ground), scaled from sprite px to map px, so strips of any height share a ground line
+
+static SDL_FRect clumpRect(const GrassClump& clump)
+{
+    const float w = clump.size.x * spriteScale * grassSize + clumpMargin;
+    const float h = clump.size.y * spriteScale * grassSize + clumpMargin;
+    return {clump.pos.x - w / 2.0f, clump.pos.y - h / 2.0f, w, h};
+}
+
+static std::vector<GrassClump> scatterGrassClumps(std::mt19937& rng, const int spriteCount)
+{
+    std::vector<GrassClump> clumps;
+    for (int i = 0; i < clumpCount; ++i) {
+        GrassClump clump = makeGrassClump(rng, {0.0f, 0.0f}, spriteCount);
+        const SDL_FRect bound = clumpRect(clump);
+        std::uniform_real_distribution<float> x(bound.w / 2.0f, bgSize.x - bound.w / 2.0f);
+        std::uniform_real_distribution<float> y(bound.h / 2.0f, bgSize.y - bound.h / 2.0f);
+
+        for (int attempt = 0; attempt < clumpTries; ++attempt) {
+            clump.pos = {std::floor(x(rng)), std::floor(y(rng))};
+            const SDL_FRect rect = clumpRect(clump);
+            const bool free = std::none_of(clumps.begin(), clumps.end(), [&](const GrassClump& other) {
+                return overlaps(rect, clumpRect(other));
+            });
+            if (free) {
+                clumps.push_back(clump);
+                break;
+            }
+        }
+    }
+    return clumps;
+}
+// map: clumps are plotted at random over the whole map; each of clumpCount clumps is made, then given random spots inside the map until its bound touches no other clump, and is skipped if clumpTries spots all collide
 
 static int fail(const char* what)
 {
@@ -290,7 +343,7 @@ int main(int, char**)
 
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
-    if (!SDL_CreateWindowAndRenderer("rts", 0, 0, SDL_WINDOW_FULLSCREEN, &window, &renderer)) {
+    if (!SDL_CreateWindowAndRenderer("rts", 0, 0, SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIGH_PIXEL_DENSITY, &window, &renderer)) {
         return fail("SDL_CreateWindowAndRenderer");
     }
     SDL_SetRenderVSync(renderer, 1);
@@ -299,11 +352,17 @@ int main(int, char**)
 
     int windowW = 0;
     int windowH = 0;
-    if (!SDL_GetWindowSize(window, &windowW, &windowH)) return fail("SDL_GetWindowSize");
+    if (!SDL_GetWindowSizeInPixels(window, &windowW, &windowH)) return fail("SDL_GetWindowSizeInPixels");
     Vector2D<float> viewport = {static_cast<float>(windowW), static_cast<float>(windowH)};
 
-    camera = {(bgSize.x - viewport.x) / 2.0f, (bgSize.y - viewport.y) / 2.0f};
-    // camera: starts at the middle of the map; view is centered by offsetting half of (map - viewport)
+    density = SDL_GetWindowPixelDensity(window);
+    if (density <= 0.0f) density = 1.0f;
+    zoom = std::max(zoomLowest(viewport), std::round(density));
+    // render: the window is drawn at the screen's real pixels instead of being stretched; viewport is in real pixels, and zoom starts at density so the game looks the same size as before
+
+    const Vector2D<float> view = viewSize(viewport);
+    camera = {(bgSize.x - view.x) / 2.0f, (bgSize.y - view.y) / 2.0f};
+    // camera: starts at the middle of the map; view is centered by offsetting half of (map - visible map area)
 
     Sprites sprites;
     sprites.npcUp = loadSprite(renderer, "npc-u.png");
@@ -320,15 +379,7 @@ int main(int, char**)
     if (grassSprites.empty()) return fail("loadGrassSprites");
 
     std::mt19937 rng(std::random_device{}());
-    const Vector2D<float> clumpOffsets[] = {
-        {60.0f, 0.0f}, {160.0f, -70.0f}, {-110.0f, -90.0f}, {-170.0f, 40.0f}, {40.0f, 110.0f}, {190.0f, 80.0f},
-    };
-    std::vector<GrassClump> clumps;
-    for (const Vector2D<float>& offset : clumpOffsets) {
-        clumps.push_back(makeGrassClump(
-            rng, {bgSize.x / 2.0f + offset.x, bgSize.y / 2.0f + offset.y}, static_cast<int>(grassSprites.size())));
-    }
-    // map: six clumps are shown around the npc to compare looks; each is made once at start by its own maker call, so all differ, from a generator seeded differently every run, at fixed offsets from the map center
+    const std::vector<GrassClump> clumps = scatterGrassClumps(rng, static_cast<int>(grassSprites.size()));
 
     std::vector<Drawable> drawables;
 
@@ -358,11 +409,11 @@ int main(int, char**)
                 if (event.key.key == SDLK_ESCAPE) running = false;
                 break;
             case SDL_EVENT_MOUSE_MOTION:
-                mouse = {event.motion.x, event.motion.y};
+                mouse = toPixels(event.motion.x, event.motion.y);
                 mouseSeen = true;
                 break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                mouse = {event.button.x, event.button.y};
+                mouse = toPixels(event.button.x, event.button.y);
                 mouseSeen = true;
                 if (event.button.button == SDL_BUTTON_LEFT) {
                     dragStart = toMap(mouse);
@@ -374,7 +425,7 @@ int main(int, char**)
                 }
                 break;
             case SDL_EVENT_MOUSE_BUTTON_UP:
-                mouse = {event.button.x, event.button.y};
+                mouse = toPixels(event.button.x, event.button.y);
                 if (event.button.button == SDL_BUTTON_LEFT && dragging) {
                     const SDL_FRect box = boxBetween(dragStart, toMap(mouse));
                     for (npc& unit : npcs) unit.setSelected(overlaps(box, npcRect(unit)));
@@ -383,12 +434,17 @@ int main(int, char**)
                 break;
             // input: left click or left drag selects, right click moves the selection; drag start is kept in map px so the box stays put while the camera scrolls, and release selects every npc the box touches
             case SDL_EVENT_MOUSE_WHEEL:
-                mouse = {event.wheel.mouse_x, event.wheel.mouse_y};
+                mouse = toPixels(event.wheel.mouse_x, event.wheel.mouse_y);
                 zoomCamera(viewport, mouse, event.wheel.y);
                 break;
-            case SDL_EVENT_WINDOW_RESIZED:
+            case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
                 viewport = {static_cast<float>(event.window.data1), static_cast<float>(event.window.data2)};
+                density = SDL_GetWindowPixelDensity(window);
+                if (density <= 0.0f) density = 1.0f;
+                zoom = std::max(zoom, zoomLowest(viewport));
+                clampCamera(viewport);
                 break;
+            // render: moving to another display changes the real pixel size and density; viewport and density are re-read, zoom is raised if the view would be bigger than the map, and the camera is locked inside the map again
             default:
                 break;
             }
@@ -406,8 +462,7 @@ int main(int, char**)
 
             const Vector2D<float> pos = npcs[i].getPos();
             if (std::hypot(pos.x - lastFootprint[i].x, pos.y - lastFootprint[i].y) >= footprintGap) {
-                const float feet = pos.y + npcs[i].getSize().y * spriteScale / 2.0f;
-                footprints.push_back({{pos.x, feet}, 0.0f, facingAngle(npcs[i].getFacing())});
+                footprints.push_back({pos, 0.0f, facingAngle(npcs[i].getFacing())});
                 lastFootprint[i] = pos;
             }
         }
@@ -429,9 +484,13 @@ int main(int, char**)
         }
 
         drawables.clear();
+        const Vector2D<float> view = viewSize(viewport);
+        const SDL_FRect viewRect = {camera.x, camera.y, view.x, view.y};
         for (const GrassClump& clump : clumps) {
+            if (!overlaps(clumpRect(clump), viewRect)) continue;
             if (!addGrassClump(drawables, grassSprites, clump)) return fail("addGrassClump");
         }
+        // render: the whole map now holds clumps and most are off screen; only clumps whose bound touches the camera view are queued for sorting and drawing
         for (const npc& unit : npcs) {
             if (!addDrawable(drawables, spriteFor(sprites, unit), unit.getPos(), 1.0f)) return fail("addDrawable npc");
         }

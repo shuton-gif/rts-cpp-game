@@ -55,6 +55,6 @@ public:
     bool isMoving() const;
     bool isSelected() const;
 };
-// unit: main.cpp could not create or draw an npc while the class lived inside npc.cpp; declaration is now a header, pos is the sprite center in map px, speed is px per ms, and getters expose state without SDL
+// unit: main.cpp could not create or draw an npc while the class lived inside npc.cpp; declaration is now a header, pos is the center bottom (feet) of the sprite in map px, speed is px per ms, and getters expose state without SDL
 
 #endif
