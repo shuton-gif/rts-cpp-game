@@ -42,7 +42,11 @@ struct Sprites {
     SDL_Texture* npcRight = nullptr;
     SDL_Texture* footprint = nullptr;
     SDL_Texture* cross = nullptr;
+    SDL_Texture* selectedArrow = nullptr;
 };
+
+const float arrowGap = 20.0f;
+const float arrowBobHeight = 4.0f;
 
 struct Footprint {
     Vector2D<float> pos;
@@ -272,7 +276,8 @@ int main(int, char**)
     sprites.npcRight = loadSprite(renderer, "npc-r.png");
     sprites.footprint = loadSprite(renderer, "foot-print.png");
     sprites.cross = loadSprite(renderer, "cross.png");
-    if (!sprites.npcUp || !sprites.npcLeft || !sprites.npcRight || !sprites.footprint || !sprites.cross) {
+    sprites.selectedArrow = loadSprite(renderer, "selectedArrow.png");
+    if (!sprites.npcUp || !sprites.npcLeft || !sprites.npcRight || !sprites.footprint || !sprites.cross || !sprites.selectedArrow) {
         return fail("loadSprite");
     }
 
@@ -371,12 +376,18 @@ int main(int, char**)
             if (!unit.isMoving()) continue;
             if (!drawSprite(renderer, sprites.cross, unit.getTargetedPos(), 255)) return fail("drawSprite cross");
         }
+        const float arrowBob = std::sin(static_cast<float>(SDL_GetTicks()) / 300.0f) * arrowBobHeight;
         for (const npc& unit : npcs) {
             if (!drawSprite(renderer, spriteFor(sprites, unit), unit.getPos(), 255)) return fail("drawSprite npc");
-            if (unit.isSelected() && !drawOutline(renderer, npcRect(unit))) return fail("drawOutline");
+            if (!unit.isSelected()) continue;
+
+            const SDL_FRect rect = npcRect(unit);
+            const Vector2D<float> arrow = {unit.getPos().x, rect.y - arrowGap + arrowBob};
+            if (!drawSprite(renderer, sprites.selectedArrow, arrow, 255)) return fail("drawSprite selectedArrow");
         }
+        // ui: selected npcs showed a green outline; they now show selectedArrow.png centered arrowGap px above the head, bobbing up and down by arrowBobHeight on a sine of the clock
         if (dragging && !drawOutline(renderer, boxBetween(dragStart, toMap(mouse)))) return fail("drawOutline");
-        // render: draw order decides what covers what; background, then footprints (alpha falls linearly with age), cross at each moving npc's destination, npcs with a green outline when selected, drag box on top
+        // render: draw order decides what covers what; background, then footprints (alpha falls linearly with age), cross at each moving npc's destination, npcs with an arrow above when selected, drag box on top
 
         if (!SDL_RenderPresent(renderer)) return fail("SDL_RenderPresent");
     }
@@ -386,6 +397,7 @@ int main(int, char**)
     SDL_DestroyTexture(sprites.npcRight);
     SDL_DestroyTexture(sprites.footprint);
     SDL_DestroyTexture(sprites.cross);
+    SDL_DestroyTexture(sprites.selectedArrow);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
