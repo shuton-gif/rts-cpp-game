@@ -21,6 +21,7 @@ FetchContent_MakeAvailable(SDL3)
 
 add_executable(rts
     src/scripts/GameScene/main.cpp
+    src/scripts/Grass/grass.cpp
     src/scripts/NPC/npc.cpp
 )
 target_include_directories(rts PRIVATE src/scripts)
@@ -28,11 +29,12 @@ target_include_directories(rts PRIVATE src/scripts)
 target_link_libraries(rts PRIVATE SDL3::SDL3)
 
 add_custom_command(TARGET rts POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E rm -rf $<TARGET_FILE_DIR:rts>/assets
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/assets
         $<TARGET_FILE_DIR:rts>/assets
 )
-# assets: game loads sprites from the folder of the executable; every build copies assets/ next to `rts` so it runs from any working directory
+# assets: game loads sprites from the folder of the executable and grass strips are found by pattern, so a deleted sprite must not linger; every build removes the copied folder and copies assets/ next to `rts` again
 
 if(MSVC)
     target_compile_options(rts PRIVATE /W4)

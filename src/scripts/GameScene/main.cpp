@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <random>
 #include <string>
 #include <vector>
 
+#include "Grass/grass.h"
 #include "NPC/npc.h"
 #include "Vector2D.h"
 // core: Vector2D is shared with npc.cpp; definition moved to src/scripts/Vector2D.h and included here
@@ -48,6 +50,7 @@ const float arrowGap = 20.0f;
 const float arrowBobHeight = 4.0f;
 const float arrowSize = 0.5f;
 const Uint8 selectFillAlpha = 153;
+const float grassSize = 0.8f;
 
 struct Footprint {
     Vector2D<float> pos;
@@ -235,6 +238,45 @@ static bool drawOutline(SDL_Renderer* renderer, SDL_FRect rect)
 }
 // ui: the drag select area needs to be visible on the green map; a map-px rect is filled white at 0.6 opacity with alpha blending, then outlined with a solid white 1 px rectangle
 
+static std::vector<SDL_Texture*> loadGrassSprites(SDL_Renderer* renderer)
+{
+    SDL_Texture* texture = loadSprite(renderer, "gress1.png");
+    if (!texture) return {};
+    return {texture};
+}
+// assets: clumps should use only the straight strip; gress1.png is the single grass sprite loaded, and the result is empty if it fails
+
+struct Drawable {
+    SDL_Texture* texture;
+    Vector2D<float> center;
+    float size;
+    float feet;
+};
+
+static bool addDrawable(std::vector<Drawable>& drawables, SDL_Texture* texture, const Vector2D<float> center, const float size)
+{
+    float w = 0.0f;
+    float h = 0.0f;
+    if (!SDL_GetTextureSize(texture, &w, &h)) return false;
+
+    drawables.push_back({texture, center, size, center.y + h * spriteScale * size / 2.0f});
+    return true;
+}
+// render: in this game the lower a thing stands on the map, the more in front it shows; everything standing on the map is queued with the map y of its bottom edge (feet), then sorted by it and drawn top to bottom
+
+static bool addGrassClump(std::vector<Drawable>& drawables, const std::vector<SDL_Texture*>& grassSprites, const GrassClump& clump)
+{
+    for (const GrassStrip& strip : clump.strips) {
+        const Vector2D<float> center = {
+            clump.pos.x + strip.offset.x * spriteScale * grassSize,
+            clump.pos.y + strip.offset.y * spriteScale * grassSize,
+        };
+        if (!addDrawable(drawables, grassSprites[strip.sprite], center, grassSize)) return false;
+    }
+    return true;
+}
+// map: a clump is data only and needs drawing, with strips 20% smaller than other sprites; each strip is queued at grassSize at clump center + offset scaled from sprite px to map px by the same factor, so strips sort against npcs one by one
+
 static int fail(const char* what)
 {
     SDL_Log("%s: %s", what, SDL_GetError());
@@ -273,6 +315,22 @@ int main(int, char**)
     if (!sprites.npcUp || !sprites.npcLeft || !sprites.npcRight || !sprites.footprint || !sprites.cross || !sprites.selectedArrow) {
         return fail("loadSprite");
     }
+
+    const std::vector<SDL_Texture*> grassSprites = loadGrassSprites(renderer);
+    if (grassSprites.empty()) return fail("loadGrassSprites");
+
+    std::mt19937 rng(std::random_device{}());
+    const Vector2D<float> clumpOffsets[] = {
+        {60.0f, 0.0f}, {160.0f, -70.0f}, {-110.0f, -90.0f}, {-170.0f, 40.0f}, {40.0f, 110.0f}, {190.0f, 80.0f},
+    };
+    std::vector<GrassClump> clumps;
+    for (const Vector2D<float>& offset : clumpOffsets) {
+        clumps.push_back(makeGrassClump(
+            rng, {bgSize.x / 2.0f + offset.x, bgSize.y / 2.0f + offset.y}, static_cast<int>(grassSprites.size())));
+    }
+    // map: six clumps are shown around the npc to compare looks; each is made once at start by its own maker call, so all differ, from a generator seeded differently every run, at fixed offsets from the map center
+
+    std::vector<Drawable> drawables;
 
     std::vector<npc> npcs;
     npcs.emplace_back(0, Vector2D<float>{bgSize.x / 2.0f, bgSize.y / 2.0f});
@@ -369,9 +427,24 @@ int main(int, char**)
             if (!unit.isMoving()) continue;
             if (!drawSprite(renderer, sprites.cross, unit.getTargetedPos(), 255)) return fail("drawSprite cross");
         }
+
+        drawables.clear();
+        for (const GrassClump& clump : clumps) {
+            if (!addGrassClump(drawables, grassSprites, clump)) return fail("addGrassClump");
+        }
+        for (const npc& unit : npcs) {
+            if (!addDrawable(drawables, spriteFor(sprites, unit), unit.getPos(), 1.0f)) return fail("addDrawable npc");
+        }
+        std::stable_sort(drawables.begin(), drawables.end(), [](const Drawable& a, const Drawable& b) {
+            return a.feet < b.feet;
+        });
+        for (const Drawable& item : drawables) {
+            if (!drawSprite(renderer, item.texture, item.center, 255, 0.0, item.size)) return fail("drawSprite drawable");
+        }
+        // render: grass always drew under the npc even when it stood lower on the map; grass strips and npcs now go in one list sorted by feet y, so whatever is lower on the map is drawn later and shows in front
+
         const float arrowBob = std::sin(static_cast<float>(SDL_GetTicks()) / 300.0f) * arrowBobHeight;
         for (const npc& unit : npcs) {
-            if (!drawSprite(renderer, spriteFor(sprites, unit), unit.getPos(), 255)) return fail("drawSprite npc");
             if (!unit.isSelected()) continue;
 
             const SDL_FRect rect = npcRect(unit);
@@ -380,7 +453,7 @@ int main(int, char**)
         }
         // ui: selected npcs showed a green outline; they now show selectedArrow.png centered arrowGap px above the head, bobbing up and down by arrowBobHeight on a sine of the clock
         if (dragging && !drawOutline(renderer, boxBetween(dragStart, toMap(mouse)))) return fail("drawOutline");
-        // render: draw order decides what covers what; background, then footprints (alpha falls linearly with age), cross at each moving npc's destination, npcs with an arrow above when selected, drag box on top
+        // render: draw order decides what covers what; background, then ground marks (footprints fading with age, cross at each moving npc's destination), then grass and npcs sorted by feet y, then selection arrows, drag box on top
 
         if (!SDL_RenderPresent(renderer)) return fail("SDL_RenderPresent");
     }
@@ -391,6 +464,7 @@ int main(int, char**)
     SDL_DestroyTexture(sprites.footprint);
     SDL_DestroyTexture(sprites.cross);
     SDL_DestroyTexture(sprites.selectedArrow);
+    for (SDL_Texture* texture : grassSprites) SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
