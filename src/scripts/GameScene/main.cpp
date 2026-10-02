@@ -23,7 +23,6 @@ struct IntervalTimer {
 // core: camera speed must not depend on frame rate; tick() returns ms since the previous call from the ns clock and resets
 
 const Vector2D<float> bgSize = {4000.0f, 4000.0f};
-const int tileSize = 100;
 const float edgeMargin = 8.0f;
 
 Vector2D<float> camera = {0.0f, 0.0f};
@@ -47,6 +46,8 @@ struct Sprites {
 
 const float arrowGap = 20.0f;
 const float arrowBobHeight = 4.0f;
+const float arrowSize = 0.5f;
+const Uint8 selectFillAlpha = 153;
 
 struct Footprint {
     Vector2D<float> pos;
@@ -110,30 +111,15 @@ static void zoomCamera(const Vector2D<float> viewport, const Vector2D<float> cur
 }
 // camera: mouse scroll zooms in and out; each wheel notch multiplies zoom by zoomStep within zoomMin..zoomMax (never so far out that the view is bigger than the map), and the camera shifts so the map point under the cursor stays under it
 
-static bool drawBackground(SDL_Renderer* renderer, const Vector2D<float> viewport)
+static bool drawBackground(SDL_Renderer* renderer)
 {
-    const Vector2D<float> view = viewSize(viewport);
-    const int camX = static_cast<int>(std::floor(camera.x));
-    const int camY = static_cast<int>(std::floor(camera.y));
-    const int endX = std::min(camX + static_cast<int>(std::ceil(view.x)) + 1, static_cast<int>(bgSize.x));
-    const int endY = std::min(camY + static_cast<int>(std::ceil(view.y)) + 1, static_cast<int>(bgSize.y));
+    const Vector2D<float> cam = cameraPx();
+    const SDL_FRect map = {-cam.x, -cam.y, bgSize.x, bgSize.y};
 
-    for (int ty = camY / tileSize; ty * tileSize < endY; ++ty) {
-        for (int tx = camX / tileSize; tx * tileSize < endX; ++tx) {
-            const Uint8 shade = (tx + ty) % 2 == 0 ? 255 : 200;
-            const SDL_FRect tile = {
-                static_cast<float>(tx * tileSize - camX),
-                static_cast<float>(ty * tileSize - camY),
-                static_cast<float>(tileSize),
-                static_cast<float>(tileSize),
-            };
-            if (!SDL_SetRenderDrawColor(renderer, shade, shade, shade, 255)) return false;
-            if (!SDL_RenderFillRect(renderer, &tile)) return false;
-        }
-    }
-    return true;
+    if (!SDL_SetRenderDrawColor(renderer, 145, 215, 96, 255)) return false;
+    return SDL_RenderFillRect(renderer, &map);
 }
-// render: map is bigger than the screen; only tiles overlapping the view are drawn, offset by the whole-px camera so tiles have no seams
+// render: checkerboard was a placeholder; the whole map is now one #91d760 rectangle shifted by the whole-px camera, and SDL clips the part that is off screen
 
 static SDL_Texture* loadSprite(SDL_Renderer* renderer, const char* name)
 {
@@ -171,19 +157,22 @@ static double facingAngle(const Facing facing)
 }
 // render: footprints must point the way the npc walked; foot-print.png is drawn walking up, so each facing maps to a clockwise angle in degrees from up
 
-static bool drawSprite(SDL_Renderer* renderer, SDL_Texture* texture, const Vector2D<float> center, const Uint8 alpha, const double angle = 0.0)
+static bool drawSprite(SDL_Renderer* renderer, SDL_Texture* texture, const Vector2D<float> center, const Uint8 alpha, const double angle = 0.0, const float size = 1.0f)
 {
     float w = 0.0f;
     float h = 0.0f;
     if (!SDL_GetTextureSize(texture, &w, &h)) return false;
+    w *= spriteScale * size;
+    h *= spriteScale * size;
 
     const Vector2D<float> cam = cameraPx();
     const SDL_FRect dst = {
-        std::floor(center.x - w * spriteScale / 2.0f) - cam.x,
-        std::floor(center.y - h * spriteScale / 2.0f) - cam.y,
-        w * spriteScale,
-        h * spriteScale,
+        std::floor(center.x - w / 2.0f) - cam.x,
+        std::floor(center.y - h / 2.0f) - cam.y,
+        w,
+        h,
     };
+    // render: the arrow needs to be smaller than other sprites; size multiplies spriteScale for this one draw (1 = normal) and the sprite stays centered on its point
     if (!SDL_SetTextureAlphaMod(texture, alpha)) return false;
     return SDL_RenderTextureRotated(renderer, texture, nullptr, &dst, angle, nullptr, SDL_FLIP_NONE);
 }
@@ -237,10 +226,14 @@ static bool drawOutline(SDL_Renderer* renderer, SDL_FRect rect)
     const Vector2D<float> cam = cameraPx();
     rect.x = std::floor(rect.x) - cam.x;
     rect.y = std::floor(rect.y) - cam.y;
-    if (!SDL_SetRenderDrawColor(renderer, 0, 200, 0, 255)) return false;
+    if (!SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND)) return false;
+    if (!SDL_SetRenderDrawColor(renderer, 255, 255, 255, selectFillAlpha)) return false;
+    if (!SDL_RenderFillRect(renderer, &rect)) return false;
+
+    if (!SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255)) return false;
     return SDL_RenderRect(renderer, &rect);
 }
-// ui: selected npcs and the drag box need to be visible; a green 1 px rectangle is drawn around a map-px rect
+// ui: the drag select area needs to be visible on the green map; a map-px rect is filled white at 0.6 opacity with alpha blending, then outlined with a solid white 1 px rectangle
 
 static int fail(const char* what)
 {
@@ -366,7 +359,7 @@ int main(int, char**)
         if (!SDL_RenderClear(renderer)) return fail("SDL_RenderClear");
         if (!SDL_SetRenderScale(renderer, zoom, zoom)) return fail("SDL_SetRenderScale");
         // camera: zoom must scale everything drawn; the renderer multiplies all coordinates by zoom, so draw code keeps working in map px
-        if (!drawBackground(renderer, viewport)) return fail("drawBackground");
+        if (!drawBackground(renderer)) return fail("drawBackground");
 
         for (const Footprint& print : footprints) {
             const Uint8 alpha = static_cast<Uint8>(255.0f * (1.0f - print.age / footprintLife));
@@ -383,7 +376,7 @@ int main(int, char**)
 
             const SDL_FRect rect = npcRect(unit);
             const Vector2D<float> arrow = {unit.getPos().x, rect.y - arrowGap + arrowBob};
-            if (!drawSprite(renderer, sprites.selectedArrow, arrow, 255)) return fail("drawSprite selectedArrow");
+            if (!drawSprite(renderer, sprites.selectedArrow, arrow, 255, 0.0, arrowSize)) return fail("drawSprite selectedArrow");
         }
         // ui: selected npcs showed a green outline; they now show selectedArrow.png centered arrowGap px above the head, bobbing up and down by arrowBobHeight on a sine of the clock
         if (dragging && !drawOutline(renderer, boxBetween(dragStart, toMap(mouse)))) return fail("drawOutline");
