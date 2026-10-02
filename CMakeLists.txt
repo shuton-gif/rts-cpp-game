@@ -1,0 +1,32 @@
+cmake_minimum_required(VERSION 3.24)
+project(rts-cpp-game LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+# build: editor could not find SDL3 headers; CMake now writes build/compile_commands.json so the editor uses the same include paths as the compiler
+
+include(FetchContent)
+
+FetchContent_Declare(
+    SDL3
+    GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+    GIT_TAG release-3.4.16
+    GIT_SHALLOW TRUE
+    FIND_PACKAGE_ARGS 3.2 CONFIG
+)
+FetchContent_MakeAvailable(SDL3)
+# build: SDL3 must build the same on every machine; an installed SDL3 3.2+ is used when found, else the pinned tag is fetched and built from source
+
+add_executable(rts
+    src/scripts/GameScene/main.cpp
+)
+target_link_libraries(rts PRIVATE SDL3::SDL3)
+
+if(MSVC)
+    target_compile_options(rts PRIVATE /W4)
+else()
+    target_compile_options(rts PRIVATE -Wall -Wextra)
+endif()
+# build: first target of the game; one executable `rts` from GameScene/main.cpp with warnings on for clang, gcc and MSVC
