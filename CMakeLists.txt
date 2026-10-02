@@ -14,15 +14,25 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
     GIT_TAG release-3.4.16
     GIT_SHALLOW TRUE
-    FIND_PACKAGE_ARGS 3.2 CONFIG
+    FIND_PACKAGE_ARGS 3.4 CONFIG
 )
 FetchContent_MakeAvailable(SDL3)
-# build: SDL3 must build the same on every machine; an installed SDL3 3.2+ is used when found, else the pinned tag is fetched and built from source
+# build: SDL3 must build the same on every machine and sprites load with SDL_LoadPNG (new in 3.4); an installed SDL3 3.4+ is used when found, else the pinned tag is fetched and built from source
 
 add_executable(rts
     src/scripts/GameScene/main.cpp
+    src/scripts/NPC/npc.cpp
 )
+target_include_directories(rts PRIVATE src/scripts)
+# build: npc.cpp was not compiled and shared headers were not on the include path; it is now part of `rts` and src/scripts is the include root
 target_link_libraries(rts PRIVATE SDL3::SDL3)
+
+add_custom_command(TARGET rts POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets
+        $<TARGET_FILE_DIR:rts>/assets
+)
+# assets: game loads sprites from the folder of the executable; every build copies assets/ next to `rts` so it runs from any working directory
 
 if(MSVC)
     target_compile_options(rts PRIVATE /W4)
