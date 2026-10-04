@@ -1,7 +1,15 @@
 #ifndef NPC_H
 #define NPC_H
 
+#include <cstddef>
+#include <vector>
+
+#include "Collision/collision.h"
 #include "Vector2D.h"
+
+const std::size_t maxDestinations = 3;
+const float colliderRadius = 10.0f;
+const float arriveSlack = 20.0f;
 
 /**
  * npc sprite
@@ -26,6 +34,11 @@ private:
     Vector2D<float> pos = {0.0f, 0.0f};
     Vector2D<float> size = {6.0f, 10.0f};
     Vector2D<float> targetedPos = {0.0f, 0.0f};
+    std::vector<Vector2D<float>> queuedPos;
+    Vector2D<float> targetedMark = {0.0f, 0.0f};
+    std::vector<Vector2D<float>> queuedMark;
+    // ui: npcs sent together walk to their own spread-out points but should show one cross at the clicked point; each destination keeps a mark (where the cross is drawn) next to its pos (where the npc walks)
+    // movement: shift right click adds destinations to visit in order; queuedPos holds the ones after targetedPos, and with targetedPos there are at most maxDestinations
 
     Facing facing = Facing::Down;
     bool facingLeft = false;
@@ -44,12 +57,19 @@ public:
     void moveX(float step);
     void moveY(float step);
 
-    void setDestinaion(Vector2D<float> clicked);
+    void setDestinaion(Vector2D<float> clicked, Vector2D<float> mark);
+    void addDestination(Vector2D<float> clicked, Vector2D<float> mark);
     void setSelected(bool selected);
+    void pushTo(Vector2D<float> pushed);
 
+    Collider getCollider() const;
+    // movement: npcs must not walk through or stand on each other; getCollider gives the solid oval at the feet (20 x 10 map px) and pushTo takes the position collision moved it to
     Vector2D<float> getPos() const;
     Vector2D<float> getSize() const;
     Vector2D<float> getTargetedPos() const;
+    const std::vector<Vector2D<float>>& getQueuedPos() const;
+    Vector2D<float> getTargetedMark() const;
+    const std::vector<Vector2D<float>>& getQueuedMark() const;
     Facing getFacing() const;
     bool isFacingLeft() const;
     bool isMoving() const;

@@ -15,6 +15,14 @@ npc::~npc() = default;
 
 void npc::update(float deltaTime)
 {
+    if (!this->isMoving() && !this->queuedPos.empty()) {
+        this->targetedPos = this->queuedPos.front();
+        this->targetedMark = this->queuedMark.front();
+        this->queuedPos.erase(this->queuedPos.begin());
+        this->queuedMark.erase(this->queuedMark.begin());
+    }
+    // movement: after arriving the npc must go on to the next added destination; when it stands on targetedPos and the queue is not empty, the oldest queued point becomes targetedPos
+
     const float dx = this->targetedPos.x - this->pos.x;
     const float dy = this->targetedPos.y - this->pos.y;
     if (dx == 0.0f && dy == 0.0f) return;
@@ -63,10 +71,41 @@ void npc::moveY(float step)
     }
 }
 
-void npc::setDestinaion(Vector2D<float> clicked)
+void npc::setDestinaion(Vector2D<float> clicked, Vector2D<float> mark)
 {
     this->targetedPos = clicked;
+    this->targetedMark = mark;
+    this->queuedPos.clear();
+    this->queuedMark.clear();
 }
+// movement: a plain right click is a new order; it replaces the destination and drops every queued one
+
+void npc::addDestination(Vector2D<float> clicked, Vector2D<float> mark)
+{
+    if (!this->isMoving() && this->queuedPos.empty()) {
+        this->targetedPos = clicked;
+        this->targetedMark = mark;
+    } else if (this->queuedPos.size() + 1 < maxDestinations) {
+        this->queuedPos.push_back(clicked);
+        this->queuedMark.push_back(mark);
+    }
+}
+// movement: shift right click adds a destination after the current ones, 3 at most; a standing npc takes it as its destination, a moving one appends it to the queue, and it is ignored when targetedPos plus the queue already hold maxDestinations
+
+Collider npc::getCollider() const
+{
+    return {this->pos, colliderRadius, false};
+}
+
+void npc::pushTo(Vector2D<float> pushed)
+{
+    const bool standing = !this->isMoving() && this->queuedPos.empty();
+    this->pos = pushed;
+
+    const float left = std::hypot(this->targetedPos.x - this->pos.x, this->targetedPos.y - this->pos.y);
+    if (standing || left <= arriveSlack) this->targetedPos = this->pos;
+}
+// movement: a pushed npc must not fight the push; a standing npc stays where it was pushed, and a walking one that is pushed within arriveSlack of its destination counts as arrived there, so npcs sent to nearly the same spot settle side by side instead of shoving forever
 
 void npc::setSelected(bool selected)
 {
@@ -76,6 +115,10 @@ void npc::setSelected(bool selected)
 Vector2D<float> npc::getPos() const { return this->pos; }
 Vector2D<float> npc::getSize() const { return this->size; }
 Vector2D<float> npc::getTargetedPos() const { return this->targetedPos; }
+const std::vector<Vector2D<float>>& npc::getQueuedPos() const { return this->queuedPos; }
+Vector2D<float> npc::getTargetedMark() const { return this->targetedMark; }
+const std::vector<Vector2D<float>>& npc::getQueuedMark() const { return this->queuedMark; }
+// ui: the cross is drawn at the clicked point, not at the npc's own spread-out point; every destination stores its mark alongside its pos, set, queued and popped together
 Facing npc::getFacing() const { return this->facing; }
 bool npc::isFacingLeft() const { return this->facingLeft; }
 bool npc::isMoving() const { return this->pos != this->targetedPos; }

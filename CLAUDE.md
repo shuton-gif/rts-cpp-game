@@ -58,7 +58,7 @@ read [edit.md](/docs/edit.md)
 
 ### History
 read [history.md](/docs/history.md)
-- before autocompact, summarize session into .claude/history/
+- before comapact and autocompact, summarize session into .claude/history/
 - file name `<topic_name>-<YY-MM-DD-TTTT>.json`
 - one file per topic, split if session had more than one
 - write history first, compact second, so nothing is lost if compact drops it

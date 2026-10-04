@@ -20,6 +20,7 @@ FetchContent_MakeAvailable(SDL3)
 # build: SDL3 must build the same on every machine and sprites load with SDL_LoadPNG (new in 3.4); an installed SDL3 3.4+ is used when found, else the pinned tag is fetched and built from source
 
 add_executable(rts
+    src/scripts/Collision/collision.cpp
     src/scripts/GameScene/main.cpp
     src/scripts/Grass/grass.cpp
     src/scripts/NPC/npc.cpp

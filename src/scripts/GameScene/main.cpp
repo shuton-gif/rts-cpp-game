@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "Collision/collision.h"
 #include "Grass/grass.h"
 #include "NPC/npc.h"
 #include "Vector2D.h"
@@ -54,6 +55,8 @@ const float grassSize = 0.75f;
 const int clumpCount = 60;
 const int clumpTries = 30;
 const float clumpMargin = 24.0f;
+const float groundArriveRad = 50.0f;
+const int renderMargin = 100;
 
 struct Footprint {
     Vector2D<float> pos;
@@ -139,10 +142,10 @@ static bool drawBackground(SDL_Renderer* renderer)
     const Vector2D<float> cam = cameraPx();
     const SDL_FRect map = {-cam.x, -cam.y, bgSize.x, bgSize.y};
 
-    if (!SDL_SetRenderDrawColor(renderer, 55, 204, 110, 255)) return false;
+    if (!SDL_SetRenderDrawColor(renderer, 97, 210, 141, 255)) return false;
     return SDL_RenderFillRect(renderer, &map);
 }
-// render: checkerboard was a placeholder; the whole map is now one #37cc6e rectangle shifted by the whole-px camera, and SDL clips the part that is off screen
+// render: checkerboard was a placeholder; the whole map is now one #61d28d rectangle shifted by the whole-px camera, and SDL clips the part that is off screen
 
 static SDL_Texture* loadSprite(SDL_Renderer* renderer, const char* name)
 {
@@ -180,6 +183,20 @@ static double facingAngle(const Facing facing)
 }
 // render: footprints must point the way the npc walked; foot-print.png is drawn walking up, so each facing maps to a clockwise angle in degrees from up
 
+Vector2D<float> renderView = {0.0f, 0.0f};
+
+static bool inRenderArea(const SDL_FRect& rect)
+{
+    const float margin = static_cast<float>(renderMargin) / zoom;
+    const Vector2D<float> cam = cameraPx();
+    const float left = cam.x - margin;
+    const float top = cam.y - margin;
+    const float right = cam.x + renderView.x + margin;
+    const float bottom = cam.y + renderView.y + margin;
+    return rect.x <= right && rect.x + rect.w >= left && rect.y <= bottom && rect.y + rect.h >= top;
+}
+// render: objects far off screen were still drawn; the render area is the visible map (renderView) grown by renderMargin screen px on every side (renderMargin / zoom in map px), and a map-px rect counts as inside when any part touches it
+
 static bool drawSprite(SDL_Renderer* renderer, SDL_Texture* texture, const Vector2D<float> center, const Uint8 alpha, const double angle = 0.0, const float size = 1.0f)
 {
     float w = 0.0f;
@@ -188,13 +205,12 @@ static bool drawSprite(SDL_Renderer* renderer, SDL_Texture* texture, const Vecto
     w *= spriteScale * size;
     h *= spriteScale * size;
 
+    const SDL_FRect area = {std::floor(center.x - w / 2.0f), std::floor(center.y - h / 2.0f), w, h};
+    if (!inRenderArea(area)) return true;
+    // render: every sprite goes through here, so one check covers all current and future objects; a sprite outside the render area is skipped, which is not an error
+
     const Vector2D<float> cam = cameraPx();
-    const SDL_FRect dst = {
-        std::floor(center.x - w / 2.0f) - cam.x,
-        std::floor(center.y - h / 2.0f) - cam.y,
-        w,
-        h,
-    };
+    const SDL_FRect dst = {area.x - cam.x, area.y - cam.y, w, h};
     // render: the arrow needs to be smaller than other sprites; size multiplies spriteScale for this one draw (1 = normal) and the sprite stays centered on its point
     if (!SDL_SetTextureAlphaMod(texture, alpha)) return false;
     return SDL_RenderTextureRotated(renderer, texture, nullptr, &dst, angle, nullptr, SDL_FLIP_NONE);
@@ -298,6 +314,20 @@ static bool addGrassClump(std::vector<Drawable>& drawables, const std::vector<SD
 }
 // map: a clump is data only and needs drawing, with strips smaller than other sprites; a strip's offset is its center bottom (where the blade meets the ground), scaled from sprite px to map px, so strips of any height share a ground line
 
+static Vector2D<float> fuzzyArrive(std::mt19937& rng, const Vector2D<float> target, const float rad = groundArriveRad)
+{
+    std::uniform_real_distribution<float> turn(0.0f, 2.0f * 3.14159265f);
+    std::uniform_real_distribution<float> reach(0.0f, 1.0f);
+
+    const float angle = turn(rng);
+    const float radius = std::sqrt(reach(rng));
+    return {
+        std::clamp(std::floor(target.x + std::cos(angle) * radius * rad), 0.0f, bgSize.x),
+        std::clamp(std::floor(target.y + std::sin(angle) * radius * rad / 2.0f), 0.0f, bgSize.y),
+    };
+}
+// movement: the spread around a target depends on what was clicked; rad is the oval's horizontal radius in map px (vertical rad / 2, the 1 : 2 oval), and a random point inside it is returned, evenly spread over the oval and kept inside the map
+
 static SDL_FRect clumpRect(const GrassClump& clump)
 {
     const float w = clump.size.x * spriteScale * grassSize + clumpMargin;
@@ -382,9 +412,13 @@ int main(int, char**)
     const std::vector<GrassClump> clumps = scatterGrassClumps(rng, static_cast<int>(grassSprites.size()));
 
     std::vector<Drawable> drawables;
+    std::vector<Collider> colliders;
 
     std::vector<npc> npcs;
     npcs.emplace_back(0, Vector2D<float>{bgSize.x / 2.0f, bgSize.y / 2.0f});
+    npcs.emplace_back(1, Vector2D<float>{bgSize.x / 2.0f - 60.0f, bgSize.y / 2.0f + 20.0f});
+    npcs.emplace_back(2, Vector2D<float>{bgSize.x / 2.0f + 60.0f, bgSize.y / 2.0f + 20.0f});
+    // unit: two more npcs are in the scene from the start; they stand 60 map px left and right of the first one, slightly lower
 
     std::vector<Vector2D<float>> lastFootprint;
     for (const npc& unit : npcs) lastFootprint.push_back(unit.getPos());
@@ -392,7 +426,7 @@ int main(int, char**)
 
     bool dragging = false;
     Vector2D<float> dragStart = {0.0f, 0.0f};
-    // unit: one npc starts at the middle of the map, which is the middle of the screen because the camera starts centered; npcs sit in a vector so more can be added
+    // unit: the first npc starts at the middle of the map, which is the middle of the screen because the camera starts centered; npcs sit in a vector so more can be added
 
     IntervalTimer timer;
     bool mouseSeen = false;
@@ -419,9 +453,22 @@ int main(int, char**)
                     dragStart = toMap(mouse);
                     dragging = true;
                 } else if (event.button.button == SDL_BUTTON_RIGHT) {
+                    const bool shift = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
+                    const Vector2D<float> clicked = toMap(mouse);
+                    const auto selected = std::count_if(npcs.begin(), npcs.end(), [](const npc& unit) {
+                        return unit.isSelected();
+                    });
                     for (npc& unit : npcs) {
-                        if (unit.isSelected()) unit.setDestinaion(toMap(mouse));
+                        if (!unit.isSelected()) continue;
+                        const Vector2D<float> target = selected > 1 ? fuzzyArrive(rng, clicked, groundArriveRad) : clicked;
+                        if (shift) {
+                            unit.addDestination(target, clicked);
+                        } else {
+                            unit.setDestinaion(target, clicked);
+                        }
                     }
+                    // movement: several npcs sent to one point arrived on the same px; when more than one is selected each gets its own fuzzyArrive point around the click, with groundArriveRad for open ground (a clicked building will pass max(h, w) of the building instead), and a single npc still goes exactly to the click
+                    // input: shift right click adds another cross to walk to after the current ones; with shift held the point is added to each selected npc's destinations, without it the point replaces them
                 }
                 break;
             case SDL_EVENT_MOUSE_BUTTON_UP:
@@ -457,9 +504,21 @@ int main(int, char**)
         for (Footprint& print : footprints) print.age += deltaTime;
         std::erase_if(footprints, [](const Footprint& print) { return print.age >= footprintLife; });
 
-        for (size_t i = 0; i < npcs.size(); ++i) {
-            npcs[i].update(deltaTime);
+        for (npc& unit : npcs) unit.update(deltaTime);
 
+        colliders.clear();
+        for (const npc& unit : npcs) colliders.push_back(unit.getCollider());
+        resolveCollisions(colliders);
+        for (size_t i = 0; i < npcs.size(); ++i) {
+            const Vector2D<float> pushed = {
+                std::clamp(colliders[i].pos.x, 0.0f, bgSize.x),
+                std::clamp(colliders[i].pos.y, 0.0f, bgSize.y),
+            };
+            if (pushed != npcs[i].getPos()) npcs[i].pushTo(pushed);
+        }
+        // movement: npcs walked through each other; after all have moved, one collider per npc goes through resolveCollisions and every npc that was pushed takes its new position, kept inside the map. Other solid objects join by adding their collider to the same list
+
+        for (size_t i = 0; i < npcs.size(); ++i) {
             const Vector2D<float> pos = npcs[i].getPos();
             if (std::hypot(pos.x - lastFootprint[i].x, pos.y - lastFootprint[i].y) >= footprintGap) {
                 footprints.push_back({pos, 0.0f, facingAngle(npcs[i].getFacing())});
@@ -472,6 +531,7 @@ int main(int, char**)
         if (!SDL_RenderClear(renderer)) return fail("SDL_RenderClear");
         if (!SDL_SetRenderScale(renderer, zoom, zoom)) return fail("SDL_SetRenderScale");
         // camera: zoom must scale everything drawn; the renderer multiplies all coordinates by zoom, so draw code keeps working in map px
+        renderView = viewSize(viewport);
         if (!drawBackground(renderer)) return fail("drawBackground");
 
         for (const Footprint& print : footprints) {
@@ -480,17 +540,19 @@ int main(int, char**)
         }
         for (const npc& unit : npcs) {
             if (!unit.isMoving()) continue;
-            if (!drawSprite(renderer, sprites.cross, unit.getTargetedPos(), 255)) return fail("drawSprite cross");
+            if (!drawSprite(renderer, sprites.cross, unit.getTargetedMark(), 255)) return fail("drawSprite cross");
+            for (const Vector2D<float>& queued : unit.getQueuedMark()) {
+                if (!drawSprite(renderer, sprites.cross, queued, 255)) return fail("drawSprite cross");
+            }
         }
+        // ui: npcs sent together showed one cross each at their spread-out points; the cross is now drawn at each destination's mark, the clicked point they share, so one click shows one cross until the last npc heading there arrives
 
         drawables.clear();
-        const Vector2D<float> view = viewSize(viewport);
-        const SDL_FRect viewRect = {camera.x, camera.y, view.x, view.y};
         for (const GrassClump& clump : clumps) {
-            if (!overlaps(clumpRect(clump), viewRect)) continue;
+            if (!inRenderArea(clumpRect(clump))) continue;
             if (!addGrassClump(drawables, grassSprites, clump)) return fail("addGrassClump");
         }
-        // render: the whole map now holds clumps and most are off screen; only clumps whose bound touches the camera view are queued for sorting and drawing
+        // render: the whole map holds clumps and most are off screen; only clumps whose bound touches the render area (screen + renderMargin) are queued for sorting and drawing
         for (const npc& unit : npcs) {
             if (!addDrawable(drawables, spriteFor(sprites, unit), unit.getPos(), 1.0f)) return fail("addDrawable npc");
         }
