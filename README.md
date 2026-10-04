@@ -16,6 +16,8 @@ Platforms: Windows, macOS
 | language | C++ | 20 |
 | build | CMake | 3.24+ |
 | packages | CMake FetchContent | pinned git tag per library |
+| watch (dev) | fswatch | macOS, `./tools/watch.sh` |
+<!-- build: rebuilding by hand after every edit was slow; fswatch is a dev-only tool that tools/watch.sh uses to rebuild on every source change, not needed to build or run the game -->
 
 ### Libraries
 
