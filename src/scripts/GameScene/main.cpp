@@ -308,7 +308,9 @@ struct Drawable {
     float size;
     float feet;
     SDL_FlipMode flip;
+    double angle;
 };
+// animation: a swinging item is drawn turned; every drawable carries an angle in degrees clockwise, 0 unless set after it is added
 
 static bool addDrawable(std::vector<Drawable>& drawables, SDL_Texture* texture, const Vector2D<float> feet, const float size, const SDL_FlipMode flip = SDL_FLIP_NONE)
 {
@@ -316,7 +318,7 @@ static bool addDrawable(std::vector<Drawable>& drawables, SDL_Texture* texture, 
     float h = 0.0f;
     if (!SDL_GetTextureSize(texture, &w, &h)) return false;
 
-    drawables.push_back({texture, {feet.x, feet.y - h * spriteScale * size / 2.0f}, size, feet.y, flip});
+    drawables.push_back({texture, {feet.x, feet.y - h * spriteScale * size / 2.0f}, size, feet.y, flip, 0.0});
     return true;
 }
 // render: a held item is drawn mirrored when on the left; every drawable carries a flip passed on to drawSprite, none unless given
@@ -543,6 +545,12 @@ int main(int, char**)
                     }
                 }
                 // unit_item: Q makes every selected npc drop the item it holds; the item lands on the ground where it was held, at the npc's feet line
+                if (event.key.key == SDLK_E) {
+                    for (item& thing : items) {
+                        if (thing.isHeld() && npcs[thing.getHolder()].isSelected()) thing.startUse();
+                    }
+                }
+                // animation: E makes every selected npc use the item it holds; startUse ignores an item that is already swinging
                 break;
             case SDL_EVENT_MOUSE_MOTION:
                 mouse = toPixels(event.motion.x, event.motion.y);
@@ -685,10 +693,13 @@ int main(int, char**)
             // unit_item: the fetcher picks the item up once it stands still within arriveSlack of it (a push near it still counts), and stops fetching when a new order removed the item from its destinations; npc id is its index in npcs
 
             if (!thing.isHeld()) continue;
-            const npc& holder = npcs[thing.getHolder()];
+            npc& holder = npcs[thing.getHolder()];
+            if (thing.updateUse(deltaTime)) thing.use(holder);
+            // animation: the swing plays over the item's useDuration and use runs once on the frame it ends
             const float side = holder.isFacingLeft() ? -1.0f : 1.0f;
             const float reach = holder.getSize().x * spriteScale / 2.0f + holdGap + thing.getSize().x / 2.0f;
-            thing.moveTo({holder.getPos().x + side * reach, holder.getPos().y - holdHeight});
+            thing.moveTo({holder.getPos().x + side * reach, holder.getPos().y - holdHeight + thing.getUseOffset()});
+            // animation: a swinging item is shifted up or down by getUseOffset from its held spot, 0 when idle
         }
         // unit_item: a held item stays at its holder's side after the npcs moved; its center is half the npc width + holdGap + half the item width from the npc's center, on the right, or on the left when the npc faces left, and up or down keep the last side because isFacingLeft only changes on a left or right step
 
@@ -741,13 +752,22 @@ int main(int, char**)
             const bool mirrored = items[i].isHeld() && npcs[items[i].getHolder()].isFacingLeft();
             if (!addDrawable(drawables, itemSprites[i], items[i].getPos(), 1.0f, mirrored ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE)) return fail("addDrawable item");
             if (items[i].isHeld()) drawables.back().feet = npcs[items[i].getHolder()].getPos().y + 0.01f;
+            if (items[i].isUsing()) {
+                const float turn = (mirrored ? -1.0f : 1.0f) * items[i].getUseAngle();
+                const float radians = turn * 3.14159265f / 180.0f;
+                const float half = items[i].getSize().y / 2.0f;
+                const Vector2D<float> pivot = items[i].getPos();
+                drawables.back().center = {pivot.x + std::sin(radians) * half, pivot.y - std::cos(radians) * half};
+                drawables.back().angle = turn;
+            }
+            // animation: a swinging item turns outward around its handle, clockwise on the right and counter-clockwise on the left; its center is swung around the bottom pivot by the angle, then the sprite is turned by the same angle about that center
         }
         // unit_item: a ground item sorts by its own feet like everything else; a held item sorts just below its holder's feet so it always shows in front of that npc, and it is mirrored while held on the left
         std::stable_sort(drawables.begin(), drawables.end(), [](const Drawable& a, const Drawable& b) {
             return a.feet < b.feet;
         });
         for (const Drawable& item : drawables) {
-            if (!drawSprite(renderer, item.texture, item.center, 255, 0.0, item.size, item.flip)) return fail("drawSprite drawable");
+            if (!drawSprite(renderer, item.texture, item.center, 255, item.angle, item.size, item.flip)) return fail("drawSprite drawable");
         }
         // render: grass always drew under the npc even when it stood lower on the map; grass strips and npcs now go in one list sorted by feet y, so whatever is lower on the map is drawn later and shows in front
 
