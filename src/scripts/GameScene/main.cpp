@@ -536,6 +536,13 @@ int main(int, char**)
                 break;
             case SDL_EVENT_KEY_DOWN:
                 if (event.key.key == SDLK_ESCAPE) running = false;
+                if (event.key.key == SDLK_Q) {
+                    for (item& thing : items) {
+                        if (!thing.isHeld() || !npcs[thing.getHolder()].isSelected()) continue;
+                        thing.drop({thing.getPos().x, npcs[thing.getHolder()].getPos().y});
+                    }
+                }
+                // unit_item: Q makes every selected npc drop the item it holds; the item lands on the ground where it was held, at the npc's feet line
                 break;
             case SDL_EVENT_MOUSE_MOTION:
                 mouse = toPixels(event.motion.x, event.motion.y);

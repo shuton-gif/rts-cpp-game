@@ -21,6 +21,7 @@ public:
     virtual void use(npc& user);
 
     void pickUp(int id);
+    void drop(Vector2D<float> pos);
     void setFetcher(int id);
     void moveTo(Vector2D<float> pos);
 

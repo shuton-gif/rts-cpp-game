@@ -20,6 +20,13 @@ void item::pickUp(int id)
 }
 // unit_item: the fetching npc arrived; the item now belongs to that npc and no one is walking to it any more
 
+void item::drop(Vector2D<float> pos)
+{
+    this->holder = -1;
+    this->pos = pos;
+}
+// unit_item: an npc lets go of its item; the item is on the ground again at pos and can be picked up by anyone
+
 void item::setFetcher(int id)
 {
     this->fetcher = id;
