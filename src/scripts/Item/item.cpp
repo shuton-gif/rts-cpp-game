@@ -10,7 +10,7 @@ item::item(Vector2D<float> pos, Vector2D<float> size, std::string image, float u
 // unit_item: npcs walk onto items to pick them up, so an item has no solid oval; radius 0, not fixed, and it is never put in the collision list
 // animation: item types swing at their own speed; useDuration is set per item, 300 ms unless given
 
-void item::use(npc&)
+void item::use(npc&, GameObject*)
 {
 }
 // unit_item: a plain item does nothing when used; each item type (axe, apple, ...) overrides use with its own action on the npc using it

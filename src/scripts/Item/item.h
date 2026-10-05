@@ -26,7 +26,8 @@ private:
 public:
     item(Vector2D<float> pos, Vector2D<float> size, std::string image, float useDuration = 300.0f);
 
-    virtual void use(npc& user);
+    virtual void use(npc& user, GameObject* target);
+    // economy: a tool acts on what is in front of the npc; target is the object within reach when the swing ends, nullptr on a miss
 
     bool startUse();
     bool updateUse(float deltaTime);

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <random>
 #include <string>
 #include <vector>
@@ -9,8 +10,10 @@
 #include "Collision/collision.h"
 #include "GameObject/gameObject.h"
 #include "Grass/grass.h"
+#include "Item/axe.h"
 #include "Item/item.h"
 #include "NPC/npc.h"
+#include "Tree/tree.h"
 #include "Vector2D.h"
 // core: Vector2D is shared with npc.cpp; definition moved to src/scripts/Vector2D.h and included here
 
@@ -66,6 +69,12 @@ const int tileRatioY = 10;
 const float holdGap = 5.0f;
 const float holdHeight = 8.0f;
 // unit_item: a held item was too close and overlapped the npc, then 15 and 10 were too far so the gap is 5; its center bottom sits holdHeight map px above the npc's feet, and holdGap map px of space stays between the npc's side and the item's side
+const float chopReach = 15.0f;
+const int plankCount = 3;
+const float plankScatter = 40.0f;
+const Vector2D<float> hpBarSize = {60.0f, 6.0f};
+const float hpBarGap = 8.0f;
+// economy: chopping needs the npc within chopReach map px of the tree, a felled tree drops plankCount planks within plankScatter map px, and the white hp bar is hpBarSize map px, hpBarGap below the tree's feet
 const Vector2D<float> tempObjectSize = {300.0f, 300.0f};
 // core: a temporary object to try clicking and gathering around, made 6 times bigger; arriveTries caps redraws of a spot that overlaps the object, tempObjectSize is its sprite area in map px (300 x 300), which also sets its collider (radius 150) and the arrive spread (rad 300)
 
@@ -294,6 +303,22 @@ static bool drawOutline(SDL_Renderer* renderer, SDL_FRect rect)
 }
 // ui: the drag select area needs to be visible on the green map; a map-px rect is filled white at 0.6 opacity with alpha blending, then outlined with a solid white 1 px rectangle
 
+static bool drawHpBar(SDL_Renderer* renderer, const tree& target)
+{
+    const Vector2D<float> feet = target.getPos();
+    const SDL_FRect bar = {std::floor(feet.x - hpBarSize.x / 2.0f), std::floor(feet.y + hpBarGap), hpBarSize.x, hpBarSize.y};
+    if (!inRenderArea(bar)) return true;
+
+    const Vector2D<float> cam = cameraPx();
+    const float left = static_cast<float>(target.getHp()) / static_cast<float>(target.getMaxHp());
+    const SDL_FRect outline = {bar.x - cam.x, bar.y - cam.y, bar.w, bar.h};
+    const SDL_FRect fill = {outline.x, outline.y, std::floor(bar.w * left), bar.h};
+    if (!SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255)) return false;
+    if (!SDL_RenderFillRect(renderer, &fill)) return false;
+    return SDL_RenderRect(renderer, &outline);
+}
+// economy: a tree's hp must be visible; a white bar hpBarSize map px sits hpBarGap below its feet, the 1 px outline is full hp and the white fill is hp / maxHp of it, skipped outside the render area
+
 static std::vector<SDL_Texture*> loadGrassSprites(SDL_Renderer* renderer)
 {
     SDL_Texture* texture = loadSprite(renderer, "grassv2.png");
@@ -376,10 +401,10 @@ static Vector2D<float> arriveAround(std::mt19937& rng, const GameObject& object)
 }
 // movement: npcs sent to an object spread around it with rad = max(w, h); a spot where an npc would overlap the object's solid oval could never be reached, so it is drawn again (up to arriveTries times) until the npc fits beside the object
 
-static bool handsFree(const std::vector<item>& items, const int id)
+static bool handsFree(const std::vector<std::unique_ptr<item>>& items, const int id)
 {
-    return std::none_of(items.begin(), items.end(), [id](const item& thing) {
-        return thing.getHolder() == id || thing.getFetcher() == id;
+    return std::none_of(items.begin(), items.end(), [id](const std::unique_ptr<item>& thing) {
+        return thing->getHolder() == id || thing->getFetcher() == id;
     });
 }
 
@@ -482,7 +507,8 @@ int main(int, char**)
     npcs.emplace_back(2, Vector2D<float>{bgSize.x / 2.0f + 60.0f, bgSize.y / 2.0f + 20.0f});
     // unit: two more npcs are in the scene from the start; they stand 60 map px left and right of the first one, slightly lower
 
-    GameObject tempObject({bgSize.x / 2.0f + 250.0f, bgSize.y / 2.0f}, tempObjectSize, tempObjectSize.x / 2.0f, true, "tree.png");
+    tree tempObject({bgSize.x / 2.0f + 250.0f, bgSize.y / 2.0f}, tempObjectSize, "tree.png");
+    // economy: the temporary object is a real tree now, with hp that the axe chops; its collider is still as wide as the tree and fixed
     SDL_Texture* tempObjectSprite = loadSprite(renderer, tempObject.getImage().c_str());
     if (!tempObjectSprite) return fail("loadSprite tempObject");
     float tempObjectW = 0.0f;
@@ -504,18 +530,36 @@ int main(int, char**)
         {"hoe.png", {-140.0f, 140.0f}},
     };
     // unit_item: more tools to try picking up; a pick-axe, a bow and a hoe lie further left and below, next to the axe, sword and shield
-    std::vector<item> items;
+    std::vector<std::unique_ptr<item>> items;
     std::vector<SDL_Texture*> itemSprites;
+    std::vector<SDL_Texture*> itemTextures;
     for (const ItemSpawn& spawn : itemSpawns) {
         SDL_Texture* texture = loadSprite(renderer, spawn.image);
         if (!texture) return fail("loadSprite item");
+        itemTextures.push_back(texture);
         float w = 0.0f;
         float h = 0.0f;
         if (!SDL_GetTextureSize(texture, &w, &h)) return fail("SDL_GetTextureSize item");
-        items.emplace_back(Vector2D<float>{bgSize.x / 2.0f + spawn.offset.x, bgSize.y / 2.0f + spawn.offset.y}, Vector2D<float>{w * spriteScale, h * spriteScale}, spawn.image);
+        const Vector2D<float> pos = {bgSize.x / 2.0f + spawn.offset.x, bgSize.y / 2.0f + spawn.offset.y};
+        const Vector2D<float> size = {w * spriteScale, h * spriteScale};
+        if (std::string(spawn.image) == "axe.png") {
+            items.push_back(std::make_unique<axe>(pos, size, spawn.image));
+        } else {
+            items.push_back(std::make_unique<item>(pos, size, spawn.image));
+        }
         itemSprites.push_back(texture);
     }
     // unit_item: an axe, a sword and a shield lie on the ground left of and below the npcs to try picking up; each spawn is an image and an offset from the map center, its size is the png size at spriteScale, and itemSprites[i] is the sprite of items[i]
+    // economy: the axe must run its own use, so items are held by pointer and the axe spawn is an `axe`; itemSprites[i] only points at a texture, itemTextures owns them and is destroyed once at exit
+
+    SDL_Texture* plankSprite = loadSprite(renderer, "plank.png");
+    if (!plankSprite) return fail("loadSprite plank");
+    itemTextures.push_back(plankSprite);
+    float plankW = 0.0f;
+    float plankH = 0.0f;
+    if (!SDL_GetTextureSize(plankSprite, &plankW, &plankH)) return fail("SDL_GetTextureSize plank");
+    bool planksDropped = false;
+    // economy: a felled tree drops planks; the plank sprite is loaded once and shared by every plank, and planksDropped makes the drop happen only once
 
     std::vector<Vector2D<float>> lastFootprint;
     for (const npc& unit : npcs) lastFootprint.push_back(unit.getPos());
@@ -539,15 +583,15 @@ int main(int, char**)
             case SDL_EVENT_KEY_DOWN:
                 if (event.key.key == SDLK_ESCAPE) running = false;
                 if (event.key.key == SDLK_Q) {
-                    for (item& thing : items) {
-                        if (!thing.isHeld() || !npcs[thing.getHolder()].isSelected()) continue;
-                        thing.drop({thing.getPos().x, npcs[thing.getHolder()].getPos().y});
+                    for (const std::unique_ptr<item>& thing : items) {
+                        if (!thing->isHeld() || !npcs[thing->getHolder()].isSelected()) continue;
+                        thing->drop({thing->getPos().x, npcs[thing->getHolder()].getPos().y});
                     }
                 }
                 // unit_item: Q makes every selected npc drop the item it holds; the item lands on the ground where it was held, at the npc's feet line
                 if (event.key.key == SDLK_E) {
-                    for (item& thing : items) {
-                        if (thing.isHeld() && npcs[thing.getHolder()].isSelected()) thing.startUse();
+                    for (const std::unique_ptr<item>& thing : items) {
+                        if (thing->isHeld() && npcs[thing->getHolder()].isSelected()) thing->startUse();
                     }
                 }
                 // animation: E makes every selected npc use the item it holds; startUse ignores an item that is already swinging
@@ -571,29 +615,30 @@ int main(int, char**)
                     const SDL_FRect point = {clicked.x, clicked.y, 0.0f, 0.0f};
                     int picked = -1;
                     for (size_t i = 0; i < items.size(); ++i) {
-                        if (items[i].isHeld() || !overlaps(point, objectRect(items[i]))) continue;
+                        if (items[i]->isHeld() || !overlaps(point, objectRect(*items[i]))) continue;
                         picked = static_cast<int>(i);
                         break;
                     }
                     int fetcherId = -1;
                     if (picked >= 0) {
-                        items[picked].setFetcher(-1);
+                        items[picked]->setFetcher(-1);
                         for (const npc& unit : npcs) {
                             if (!unit.isSelected() || !handsFree(items, unit.id)) continue;
                             fetcherId = unit.id;
                             break;
                         }
-                        items[picked].setFetcher(fetcherId);
+                        items[picked]->setFetcher(fetcherId);
                         if (fetcherId < 0) picked = -1;
                     }
                     // unit_item: right click on a ground item sends one npc to pick it up; the first selected npc with free hands becomes its fetcher, and with no free npc the click counts as a ground click
 
-                    const bool onObject = picked < 0 && overlaps(point, objectRect(tempObject));
+                    const bool onObject = picked < 0 && !tempObject.isFelled() && overlaps(point, objectRect(tempObject));
+                    // economy: a felled tree is gone, so a right click where it stood is a ground click
                     const Vector2D<float> mark = onObject ? tempObject.getPos() : clicked;
                     for (npc& unit : npcs) {
                         if (!unit.isSelected()) continue;
                         if (unit.id == fetcherId) {
-                            const Vector2D<float> spot = items[picked].getPos();
+                            const Vector2D<float> spot = items[picked]->getPos();
                             if (shift) {
                                 unit.addDestination(spot, spot);
                             } else {
@@ -621,7 +666,8 @@ int main(int, char**)
                 if (event.button.button == SDL_BUTTON_LEFT && dragging) {
                     const SDL_FRect box = boxBetween(dragStart, toMap(mouse));
                     for (npc& unit : npcs) unit.setSelected(overlaps(box, npcRect(unit)));
-                    const bool objectHit = overlaps(box, objectRect(tempObject));
+                    const bool objectHit = !tempObject.isFelled() && overlaps(box, objectRect(tempObject));
+                    // economy: a felled tree can no longer be selected
                     if (objectHit && !tempObject.isClicked()) tempObject.onClick();
                     tempObject.setClicked(objectHit);
                     // core: an object is selected the same way as npcs; release sets clicked when the box touches its sprite area, calls onClick when it was not clicked before, and clears it otherwise
@@ -657,8 +703,8 @@ int main(int, char**)
 
         colliders.clear();
         for (const npc& unit : npcs) colliders.push_back(unit.getCollider());
-        colliders.push_back(tempObject.getCollider());
-        // core: npcs must not walk through the object; its fixed collider goes after the npcs, so colliders[i] still matches npcs[i] and only npcs are pushed
+        if (!tempObject.isFelled()) colliders.push_back(tempObject.getCollider());
+        // core: npcs must not walk through the object; its fixed collider goes after the npcs, so colliders[i] still matches npcs[i] and only npcs are pushed, and a felled tree is no longer solid
         resolveCollisions(colliders);
         for (size_t i = 0; i < npcs.size(); ++i) {
             const Vector2D<float> pushed = {
@@ -678,7 +724,8 @@ int main(int, char**)
         }
         // movement: footprints follow the npc and fade after 1000 ms; each npc drops one at its feet every footprintGap px walked, every footprint ages by deltaTime and is erased at footprintLife
 
-        for (item& thing : items) {
+        for (const std::unique_ptr<item>& owned : items) {
+            item& thing = *owned;
             const int fetcher = thing.getFetcher();
             if (fetcher >= 0) {
                 const npc& unit = npcs[fetcher];
@@ -694,14 +741,32 @@ int main(int, char**)
 
             if (!thing.isHeld()) continue;
             npc& holder = npcs[thing.getHolder()];
-            if (thing.updateUse(deltaTime)) thing.use(holder);
+            if (thing.updateUse(deltaTime)) {
+                GameObject* target = nullptr;
+                if (!tempObject.isFelled()) {
+                    Collider trunk = tempObject.getCollider();
+                    Collider swing = {holder.getPos(), colliderRadius + chopReach, false};
+                    if (separate(trunk, swing)) target = &tempObject;
+                }
+                thing.use(holder, target);
+            }
             // animation: the swing plays over the item's useDuration and use runs once on the frame it ends
+            // economy: a swing hits the tree when the holder's feet oval, grown by chopReach, touches the tree's solid oval; otherwise the target is nullptr and the swing misses
             const float side = holder.isFacingLeft() ? -1.0f : 1.0f;
             const float reach = holder.getSize().x * spriteScale / 2.0f + holdGap + thing.getSize().x / 2.0f;
             thing.moveTo({holder.getPos().x + side * reach, holder.getPos().y - holdHeight + thing.getUseOffset()});
             // animation: a swinging item is shifted up or down by getUseOffset from its held spot, 0 when idle
         }
         // unit_item: a held item stays at its holder's side after the npcs moved; its center is half the npc width + holdGap + half the item width from the npc's center, on the right, or on the left when the npc faces left, and up or down keep the last side because isFacingLeft only changes on a left or right step
+
+        if (tempObject.isFelled() && !planksDropped) {
+            for (int i = 0; i < plankCount; ++i) {
+                items.push_back(std::make_unique<item>(fuzzyArrive(rng, tempObject.getPos(), plankScatter), Vector2D<float>{plankW * spriteScale, plankH * spriteScale}, "plank.png"));
+                itemSprites.push_back(plankSprite);
+            }
+            planksDropped = true;
+        }
+        // economy: the tree drops wood when felled; once, plankCount planks are added as ground items at random spots within plankScatter map px of where it stood, after the item loop so the list is not changed while it is walked
 
         if (!SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255)) return fail("SDL_SetRenderDrawColor");
         if (!SDL_RenderClear(renderer)) return fail("SDL_RenderClear");
@@ -721,13 +786,13 @@ int main(int, char**)
             std::vector<Vector2D<float>> marks = unit.getQueuedMark();
             marks.push_back(unit.getTargetedMark());
             for (const Vector2D<float>& mark : marks) {
-                if (mark == tempObject.getPos()) {
+                if (!tempObject.isFelled() && mark == tempObject.getPos()) {
                     objectTargeted = true;
                     continue;
                 }
                 bool onItem = false;
                 for (size_t i = 0; i < items.size(); ++i) {
-                    if (items[i].isHeld() || mark != items[i].getPos()) continue;
+                    if (items[i]->isHeld() || mark != items[i]->getPos()) continue;
                     itemTargeted[i] = true;
                     onItem = true;
                 }
@@ -746,17 +811,18 @@ int main(int, char**)
         for (const npc& unit : npcs) {
             if (!addDrawable(drawables, spriteFor(sprites, unit), unit.getPos(), 1.0f)) return fail("addDrawable npc");
         }
-        if (!addDrawable(drawables, tempObjectSprite, tempObject.getPos(), tempObjectDrawSize)) return fail("addDrawable tempObject");
+        if (!tempObject.isFelled() && !addDrawable(drawables, tempObjectSprite, tempObject.getPos(), tempObjectDrawSize)) return fail("addDrawable tempObject");
+        // economy: a felled tree is gone from the map and is not drawn
         // core: the object stands on the map like npcs and grass; it joins the feet-y sorted list so a lower npc shows in front of it
         for (size_t i = 0; i < items.size(); ++i) {
-            const bool mirrored = items[i].isHeld() && npcs[items[i].getHolder()].isFacingLeft();
-            if (!addDrawable(drawables, itemSprites[i], items[i].getPos(), 1.0f, mirrored ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE)) return fail("addDrawable item");
-            if (items[i].isHeld()) drawables.back().feet = npcs[items[i].getHolder()].getPos().y + 0.01f;
-            if (items[i].isUsing()) {
-                const float turn = (mirrored ? -1.0f : 1.0f) * items[i].getUseAngle();
+            const bool mirrored = items[i]->isHeld() && npcs[items[i]->getHolder()].isFacingLeft();
+            if (!addDrawable(drawables, itemSprites[i], items[i]->getPos(), 1.0f, mirrored ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE)) return fail("addDrawable item");
+            if (items[i]->isHeld()) drawables.back().feet = npcs[items[i]->getHolder()].getPos().y + 0.01f;
+            if (items[i]->isUsing()) {
+                const float turn = (mirrored ? -1.0f : 1.0f) * items[i]->getUseAngle();
                 const float radians = turn * 3.14159265f / 180.0f;
-                const float half = items[i].getSize().y / 2.0f;
-                const Vector2D<float> pivot = items[i].getPos();
+                const float half = items[i]->getSize().y / 2.0f;
+                const Vector2D<float> pivot = items[i]->getPos();
                 drawables.back().center = {pivot.x + std::sin(radians) * half, pivot.y - std::cos(radians) * half};
                 drawables.back().angle = turn;
             }
@@ -780,14 +846,16 @@ int main(int, char**)
             if (!drawSprite(renderer, sprites.selectedArrow, arrow, 255, 0.0, arrowSize)) return fail("drawSprite selectedArrow");
         }
         // ui: selected npcs showed a green outline; they now show selectedArrow.png centered arrowGap px above the head, bobbing up and down by arrowBobHeight on a sine of the clock
-        if (tempObject.isClicked() || objectTargeted) {
+        if (!tempObject.isFelled() && !drawHpBar(renderer, tempObject)) return fail("drawHpBar");
+        // economy: the tree shows its hp; the white bar is drawn over the sprites, under the arrows, while the tree stands
+        if (!tempObject.isFelled() && (tempObject.isClicked() || objectTargeted)) {
             const Vector2D<float> arrow = {tempObject.getPos().x, objectRect(tempObject).y - arrowGap + arrowBob};
             if (!drawSprite(renderer, sprites.selectedArrow, arrow, 255, 0.0, arrowSize)) return fail("drawSprite selectedArrow");
         }
         // ui: an object shows the arrow while it is clicked and while any npc is still walking to it (in place of the cross); the same bobbing arrow is drawn arrowGap px above the top of its sprite area
         for (size_t i = 0; i < items.size(); ++i) {
             if (!itemTargeted[i]) continue;
-            const Vector2D<float> arrow = {items[i].getPos().x, objectRect(items[i]).y - arrowGap + arrowBob};
+            const Vector2D<float> arrow = {items[i]->getPos().x, objectRect(*items[i]).y - arrowGap + arrowBob};
             if (!drawSprite(renderer, sprites.selectedArrow, arrow, 255, 0.0, arrowSize)) return fail("drawSprite selectedArrow");
         }
         // unit_item: a ground item an npc is walking to shows the bobbing arrow above it in place of the cross
@@ -804,7 +872,8 @@ int main(int, char**)
     SDL_DestroyTexture(sprites.cross);
     SDL_DestroyTexture(sprites.selectedArrow);
     SDL_DestroyTexture(tempObjectSprite);
-    for (SDL_Texture* texture : itemSprites) SDL_DestroyTexture(texture);
+    for (SDL_Texture* texture : itemTextures) SDL_DestroyTexture(texture);
+    // economy: planks share one texture, so textures are destroyed from the owned list, each once
     for (SDL_Texture* texture : grassSprites) SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
