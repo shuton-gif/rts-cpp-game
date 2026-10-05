@@ -9,6 +9,7 @@
 #include "Collision/collision.h"
 #include "GameObject/gameObject.h"
 #include "Grass/grass.h"
+#include "Item/item.h"
 #include "NPC/npc.h"
 #include "Vector2D.h"
 // core: Vector2D is shared with npc.cpp; definition moved to src/scripts/Vector2D.h and included here
@@ -62,6 +63,9 @@ const int renderMargin = 100;
 const int tileRatioX = 10;
 const int tileRatioY = 10;
 // map: the map is laid out in tiles; one tile is tileRatioX x tileRatioY map px (10 x 10), and the selection box snaps to them
+const float holdGap = 5.0f;
+const float holdHeight = 8.0f;
+// unit_item: a held item was too close and overlapped the npc, then 15 and 10 were too far so the gap is 5; its center bottom sits holdHeight map px above the npc's feet, and holdGap map px of space stays between the npc's side and the item's side
 const Vector2D<float> tempObjectSize = {300.0f, 300.0f};
 // core: a temporary object to try clicking and gathering around, made 6 times bigger; arriveTries caps redraws of a spot that overlaps the object, tempObjectSize is its sprite area in map px (300 x 300), which also sets its collider (radius 150) and the arrive spread (rad 300)
 
@@ -204,7 +208,7 @@ static bool inRenderArea(const SDL_FRect& rect)
 }
 // render: objects far off screen were still drawn; the render area is the visible map (renderView) grown by renderMargin screen px on every side (renderMargin / zoom in map px), and a map-px rect counts as inside when any part touches it
 
-static bool drawSprite(SDL_Renderer* renderer, SDL_Texture* texture, const Vector2D<float> center, const Uint8 alpha, const double angle = 0.0, const float size = 1.0f)
+static bool drawSprite(SDL_Renderer* renderer, SDL_Texture* texture, const Vector2D<float> center, const Uint8 alpha, const double angle = 0.0, const float size = 1.0f, const SDL_FlipMode flip = SDL_FLIP_NONE)
 {
     float w = 0.0f;
     float h = 0.0f;
@@ -220,8 +224,9 @@ static bool drawSprite(SDL_Renderer* renderer, SDL_Texture* texture, const Vecto
     const SDL_FRect dst = {area.x - cam.x, area.y - cam.y, w, h};
     // render: the arrow needs to be smaller than other sprites; size multiplies spriteScale for this one draw (1 = normal) and the sprite stays centered on its point
     if (!SDL_SetTextureAlphaMod(texture, alpha)) return false;
-    return SDL_RenderTextureRotated(renderer, texture, nullptr, &dst, angle, nullptr, SDL_FLIP_NONE);
+    return SDL_RenderTextureRotated(renderer, texture, nullptr, &dst, angle, nullptr, flip);
 }
+// render: an item held on the left must face left; flip mirrors the sprite (SDL_FLIP_HORIZONTAL), default is no flip
 // render: npc, cross and footprint all draw the same way; texture is centered on a map point, scaled by spriteScale, shifted by the camera, faded by alpha and rotated around its center by angle (0 for npc and cross)
 
 static SDL_Texture* spriteFor(const Sprites& sprites, const npc& unit)
@@ -302,17 +307,19 @@ struct Drawable {
     Vector2D<float> center;
     float size;
     float feet;
+    SDL_FlipMode flip;
 };
 
-static bool addDrawable(std::vector<Drawable>& drawables, SDL_Texture* texture, const Vector2D<float> feet, const float size)
+static bool addDrawable(std::vector<Drawable>& drawables, SDL_Texture* texture, const Vector2D<float> feet, const float size, const SDL_FlipMode flip = SDL_FLIP_NONE)
 {
     float w = 0.0f;
     float h = 0.0f;
     if (!SDL_GetTextureSize(texture, &w, &h)) return false;
 
-    drawables.push_back({texture, {feet.x, feet.y - h * spriteScale * size / 2.0f}, size, feet.y});
+    drawables.push_back({texture, {feet.x, feet.y - h * spriteScale * size / 2.0f}, size, feet.y, flip});
     return true;
 }
+// render: a held item is drawn mirrored when on the left; every drawable carries a flip passed on to drawSprite, none unless given
 // render: in this game the lower a thing stands on the map, the more in front it shows, and everything standing on the map is positioned by its center bottom (feet); a thing is queued with its sprite half its height above the feet point, then the list is sorted by feet y and drawn top to bottom
 
 static bool addGrassClump(std::vector<Drawable>& drawables, const std::vector<SDL_Texture*>& grassSprites, const GrassClump& clump)
@@ -366,6 +373,20 @@ static Vector2D<float> arriveAround(std::mt19937& rng, const GameObject& object)
     return spot;
 }
 // movement: npcs sent to an object spread around it with rad = max(w, h); a spot where an npc would overlap the object's solid oval could never be reached, so it is drawn again (up to arriveTries times) until the npc fits beside the object
+
+static bool handsFree(const std::vector<item>& items, const int id)
+{
+    return std::none_of(items.begin(), items.end(), [id](const item& thing) {
+        return thing.getHolder() == id || thing.getFetcher() == id;
+    });
+}
+
+static bool hasMark(const npc& unit, const Vector2D<float> mark)
+{
+    const std::vector<Vector2D<float>>& queued = unit.getQueuedMark();
+    return unit.getTargetedMark() == mark || std::find(queued.begin(), queued.end(), mark) != queued.end();
+}
+// unit_item: an npc carries one item at a time and keeps fetching only while the item is still among its destinations; hands are free when no item is held or fetched by that npc id, and hasMark checks the current and queued marks
 
 static SDL_FRect clumpRect(const GrassClump& clump)
 {
@@ -468,6 +489,32 @@ int main(int, char**)
     const float tempObjectDrawSize = tempObjectSize.x / (tempObjectW * spriteScale);
     // core: the temporary object is a tree, 250 map px right of the npcs so its bigger solid oval does not cover them at start; it is a fixed solid oval as wide as the object, its sprite comes from its image name (tree.png) and is scaled to the object's width
 
+    struct ItemSpawn {
+        const char* image;
+        Vector2D<float> offset;
+    };
+    const ItemSpawn itemSpawns[] = {
+        {"axe.png", {-140.0f, 20.0f}},
+        {"sword.png", {-140.0f, 80.0f}},
+        {"sheild.png", {-60.0f, 90.0f}},
+        {"pick-axe.png", {-220.0f, 20.0f}},
+        {"bow.png", {-220.0f, 80.0f}},
+        {"hoe.png", {-140.0f, 140.0f}},
+    };
+    // unit_item: more tools to try picking up; a pick-axe, a bow and a hoe lie further left and below, next to the axe, sword and shield
+    std::vector<item> items;
+    std::vector<SDL_Texture*> itemSprites;
+    for (const ItemSpawn& spawn : itemSpawns) {
+        SDL_Texture* texture = loadSprite(renderer, spawn.image);
+        if (!texture) return fail("loadSprite item");
+        float w = 0.0f;
+        float h = 0.0f;
+        if (!SDL_GetTextureSize(texture, &w, &h)) return fail("SDL_GetTextureSize item");
+        items.emplace_back(Vector2D<float>{bgSize.x / 2.0f + spawn.offset.x, bgSize.y / 2.0f + spawn.offset.y}, Vector2D<float>{w * spriteScale, h * spriteScale}, spawn.image);
+        itemSprites.push_back(texture);
+    }
+    // unit_item: an axe, a sword and a shield lie on the ground left of and below the npcs to try picking up; each spawn is an image and an offset from the map center, its size is the png size at spriteScale, and itemSprites[i] is the sprite of items[i]
+
     std::vector<Vector2D<float>> lastFootprint;
     for (const npc& unit : npcs) lastFootprint.push_back(unit.getPos());
     std::vector<Footprint> footprints;
@@ -506,10 +553,40 @@ int main(int, char**)
                     const auto selected = std::count_if(npcs.begin(), npcs.end(), [](const npc& unit) {
                         return unit.isSelected();
                     });
-                    const bool onObject = overlaps({clicked.x, clicked.y, 0.0f, 0.0f}, objectRect(tempObject));
+                    const SDL_FRect point = {clicked.x, clicked.y, 0.0f, 0.0f};
+                    int picked = -1;
+                    for (size_t i = 0; i < items.size(); ++i) {
+                        if (items[i].isHeld() || !overlaps(point, objectRect(items[i]))) continue;
+                        picked = static_cast<int>(i);
+                        break;
+                    }
+                    int fetcherId = -1;
+                    if (picked >= 0) {
+                        items[picked].setFetcher(-1);
+                        for (const npc& unit : npcs) {
+                            if (!unit.isSelected() || !handsFree(items, unit.id)) continue;
+                            fetcherId = unit.id;
+                            break;
+                        }
+                        items[picked].setFetcher(fetcherId);
+                        if (fetcherId < 0) picked = -1;
+                    }
+                    // unit_item: right click on a ground item sends one npc to pick it up; the first selected npc with free hands becomes its fetcher, and with no free npc the click counts as a ground click
+
+                    const bool onObject = picked < 0 && overlaps(point, objectRect(tempObject));
                     const Vector2D<float> mark = onObject ? tempObject.getPos() : clicked;
                     for (npc& unit : npcs) {
                         if (!unit.isSelected()) continue;
+                        if (unit.id == fetcherId) {
+                            const Vector2D<float> spot = items[picked].getPos();
+                            if (shift) {
+                                unit.addDestination(spot, spot);
+                            } else {
+                                unit.setDestinaion(spot, spot);
+                            }
+                            continue;
+                        }
+                        // unit_item: the fetcher walks exactly onto the item and its mark is the item's pos, so the arrow shows over the item instead of a cross; shift queues it like any destination
                         const Vector2D<float> target = onObject ? arriveAround(rng, tempObject)
                             : selected > 1 ? fuzzyArrive(rng, clicked, groundArriveRad) : clicked;
                         // movement: a right click on an object sends npcs around it instead of onto it; every selected npc, even a single one, gets an arriveAround spot with rad = max(w, h) of the object, and ground clicks are unchanged
@@ -586,6 +663,28 @@ int main(int, char**)
         }
         // movement: footprints follow the npc and fade after 1000 ms; each npc drops one at its feet every footprintGap px walked, every footprint ages by deltaTime and is erased at footprintLife
 
+        for (item& thing : items) {
+            const int fetcher = thing.getFetcher();
+            if (fetcher >= 0) {
+                const npc& unit = npcs[fetcher];
+                const Vector2D<float> pos = unit.getPos();
+                const Vector2D<float> spot = thing.getPos();
+                if (!unit.isMoving() && std::hypot(pos.x - spot.x, pos.y - spot.y) <= arriveSlack) {
+                    thing.pickUp(fetcher);
+                } else if (!hasMark(unit, spot)) {
+                    thing.setFetcher(-1);
+                }
+            }
+            // unit_item: the fetcher picks the item up once it stands still within arriveSlack of it (a push near it still counts), and stops fetching when a new order removed the item from its destinations; npc id is its index in npcs
+
+            if (!thing.isHeld()) continue;
+            const npc& holder = npcs[thing.getHolder()];
+            const float side = holder.isFacingLeft() ? -1.0f : 1.0f;
+            const float reach = holder.getSize().x * spriteScale / 2.0f + holdGap + thing.getSize().x / 2.0f;
+            thing.moveTo({holder.getPos().x + side * reach, holder.getPos().y - holdHeight});
+        }
+        // unit_item: a held item stays at its holder's side after the npcs moved; its center is half the npc width + holdGap + half the item width from the npc's center, on the right, or on the left when the npc faces left, and up or down keep the last side because isFacingLeft only changes on a left or right step
+
         if (!SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255)) return fail("SDL_SetRenderDrawColor");
         if (!SDL_RenderClear(renderer)) return fail("SDL_RenderClear");
         if (!SDL_SetRenderScale(renderer, zoom, zoom)) return fail("SDL_SetRenderScale");
@@ -598,6 +697,7 @@ int main(int, char**)
             if (!drawSprite(renderer, sprites.footprint, print.pos, alpha, print.angle)) return fail("drawSprite footprint");
         }
         bool objectTargeted = false;
+        std::vector<bool> itemTargeted(items.size(), false);
         for (const npc& unit : npcs) {
             if (!unit.isMoving()) continue;
             std::vector<Vector2D<float>> marks = unit.getQueuedMark();
@@ -607,10 +707,17 @@ int main(int, char**)
                     objectTargeted = true;
                     continue;
                 }
+                bool onItem = false;
+                for (size_t i = 0; i < items.size(); ++i) {
+                    if (items[i].isHeld() || mark != items[i].getPos()) continue;
+                    itemTargeted[i] = true;
+                    onItem = true;
+                }
+                if (onItem) continue;
                 if (!drawSprite(renderer, sprites.cross, mark, 255)) return fail("drawSprite cross");
             }
         }
-        // ui: npcs sent together showed one cross each at their spread-out points; the cross is drawn at each destination's mark, the clicked point they share, so one click shows one cross until the last npc heading there arrives, and a mark on the object draws no cross but sets objectTargeted for the arrow
+        // ui: npcs sent together showed one cross each at their spread-out points; the cross is drawn at each destination's mark, the clicked point they share, so one click shows one cross until the last npc heading there arrives, and a mark on the object or on a ground item draws no cross but flags that object or item for the arrow
 
         drawables.clear();
         for (const GrassClump& clump : clumps) {
@@ -623,11 +730,17 @@ int main(int, char**)
         }
         if (!addDrawable(drawables, tempObjectSprite, tempObject.getPos(), tempObjectDrawSize)) return fail("addDrawable tempObject");
         // core: the object stands on the map like npcs and grass; it joins the feet-y sorted list so a lower npc shows in front of it
+        for (size_t i = 0; i < items.size(); ++i) {
+            const bool mirrored = items[i].isHeld() && npcs[items[i].getHolder()].isFacingLeft();
+            if (!addDrawable(drawables, itemSprites[i], items[i].getPos(), 1.0f, mirrored ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE)) return fail("addDrawable item");
+            if (items[i].isHeld()) drawables.back().feet = npcs[items[i].getHolder()].getPos().y + 0.01f;
+        }
+        // unit_item: a ground item sorts by its own feet like everything else; a held item sorts just below its holder's feet so it always shows in front of that npc, and it is mirrored while held on the left
         std::stable_sort(drawables.begin(), drawables.end(), [](const Drawable& a, const Drawable& b) {
             return a.feet < b.feet;
         });
         for (const Drawable& item : drawables) {
-            if (!drawSprite(renderer, item.texture, item.center, 255, 0.0, item.size)) return fail("drawSprite drawable");
+            if (!drawSprite(renderer, item.texture, item.center, 255, 0.0, item.size, item.flip)) return fail("drawSprite drawable");
         }
         // render: grass always drew under the npc even when it stood lower on the map; grass strips and npcs now go in one list sorted by feet y, so whatever is lower on the map is drawn later and shows in front
 
@@ -645,6 +758,12 @@ int main(int, char**)
             if (!drawSprite(renderer, sprites.selectedArrow, arrow, 255, 0.0, arrowSize)) return fail("drawSprite selectedArrow");
         }
         // ui: an object shows the arrow while it is clicked and while any npc is still walking to it (in place of the cross); the same bobbing arrow is drawn arrowGap px above the top of its sprite area
+        for (size_t i = 0; i < items.size(); ++i) {
+            if (!itemTargeted[i]) continue;
+            const Vector2D<float> arrow = {items[i].getPos().x, objectRect(items[i]).y - arrowGap + arrowBob};
+            if (!drawSprite(renderer, sprites.selectedArrow, arrow, 255, 0.0, arrowSize)) return fail("drawSprite selectedArrow");
+        }
+        // unit_item: a ground item an npc is walking to shows the bobbing arrow above it in place of the cross
         if (dragging && !drawOutline(renderer, boxBetween(dragStart, toMap(mouse)))) return fail("drawOutline");
         // render: draw order decides what covers what; background, then ground marks (footprints fading with age, cross at each moving npc's destination), then grass and npcs sorted by feet y, then selection arrows, drag box on top
 
@@ -658,6 +777,7 @@ int main(int, char**)
     SDL_DestroyTexture(sprites.cross);
     SDL_DestroyTexture(sprites.selectedArrow);
     SDL_DestroyTexture(tempObjectSprite);
+    for (SDL_Texture* texture : itemSprites) SDL_DestroyTexture(texture);
     for (SDL_Texture* texture : grassSprites) SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

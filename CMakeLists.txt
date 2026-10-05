@@ -24,10 +24,11 @@ add_executable(rts
     src/scripts/GameObject/gameObject.cpp
     src/scripts/GameScene/main.cpp
     src/scripts/Grass/grass.cpp
+    src/scripts/Item/item.cpp
     src/scripts/NPC/npc.cpp
 )
 target_include_directories(rts PRIVATE src/scripts)
-# build: gameObject.cpp was not compiled; every source under src/scripts is listed in `rts` and src/scripts is the include root
+# build: item.cpp was not compiled; every source under src/scripts is listed in `rts` and src/scripts is the include root
 target_link_libraries(rts PRIVATE SDL3::SDL3)
 
 add_custom_command(TARGET rts POST_BUILD
