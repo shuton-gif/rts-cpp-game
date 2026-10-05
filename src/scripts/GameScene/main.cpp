@@ -59,6 +59,9 @@ const float clumpMargin = 24.0f;
 const float groundArriveRad = 50.0f;
 const int arriveTries = 30;
 const int renderMargin = 100;
+[[maybe_unused]] const int tileRatioX = 10;
+[[maybe_unused]] const int tileRatioY = 7;
+// map: the map will be laid out in tiles; a tile's width : height ratio is tileRatioX : tileRatioY (10 : 7), not used yet so marked maybe_unused to keep the build warning free
 const Vector2D<float> tempObjectSize = {300.0f, 300.0f};
 // core: a temporary object to try clicking and gathering around, made 6 times bigger; arriveTries caps redraws of a spot that overlaps the object, tempObjectSize is its sprite area in map px (300 x 300), which also sets its collider (radius 150) and the arrive spread (rad 300)
 
