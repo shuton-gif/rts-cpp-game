@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Collision/collision.h"
+#include "GameObject/gameObject.h"
 #include "Grass/grass.h"
 #include "NPC/npc.h"
 #include "Vector2D.h"
@@ -56,7 +57,10 @@ const int clumpCount = 60;
 const int clumpTries = 30;
 const float clumpMargin = 24.0f;
 const float groundArriveRad = 50.0f;
+const int arriveTries = 30;
 const int renderMargin = 100;
+const Vector2D<float> tempObjectSize = {50.0f, 50.0f};
+// core: a temporary object to try clicking and gathering around; arriveTries caps redraws of a spot that overlaps the object, tempObjectSize is its sprite area in map px
 
 struct Footprint {
     Vector2D<float> pos;
@@ -328,6 +332,31 @@ static Vector2D<float> fuzzyArrive(std::mt19937& rng, const Vector2D<float> targ
 }
 // movement: the spread around a target depends on what was clicked; rad is the oval's horizontal radius in map px (vertical rad / 2, the 1 : 2 oval), and a random point inside it is returned, evenly spread over the oval and kept inside the map
 
+static SDL_FRect objectRect(const GameObject& object)
+{
+    const Vector2D<float> pos = object.getPos();
+    const Vector2D<float> size = object.getSize();
+    return {pos.x - size.x / 2.0f, pos.y - size.y, size.x, size.y};
+}
+// core: a game object is clicked and gets its arrow by its sprite area; size is already map px, so the rect runs from the feet up by the height, centered on x
+
+static Vector2D<float> arriveAround(std::mt19937& rng, const GameObject& object)
+{
+    const Vector2D<float> pos = object.getPos();
+    const Vector2D<float> size = object.getSize();
+    const float rad = std::max(size.x, size.y);
+
+    Vector2D<float> spot = fuzzyArrive(rng, pos, rad);
+    for (int attempt = 0; attempt < arriveTries; ++attempt) {
+        Collider solid = object.getCollider();
+        Collider unit = {spot, colliderRadius, false};
+        if (!separate(solid, unit)) break;
+        spot = fuzzyArrive(rng, pos, rad);
+    }
+    return spot;
+}
+// movement: npcs sent to an object spread around it with rad = max(w, h); a spot where an npc would overlap the object's solid oval could never be reached, so it is drawn again (up to arriveTries times) until the npc fits beside the object
+
 static SDL_FRect clumpRect(const GrassClump& clump)
 {
     const float w = clump.size.x * spriteScale * grassSize + clumpMargin;
@@ -420,6 +449,15 @@ int main(int, char**)
     npcs.emplace_back(2, Vector2D<float>{bgSize.x / 2.0f + 60.0f, bgSize.y / 2.0f + 20.0f});
     // unit: two more npcs are in the scene from the start; they stand 60 map px left and right of the first one, slightly lower
 
+    GameObject tempObject({bgSize.x / 2.0f + 150.0f, bgSize.y / 2.0f}, tempObjectSize, tempObjectSize.x / 2.0f, true, "sheild.png");
+    SDL_Texture* tempObjectSprite = loadSprite(renderer, tempObject.getImage().c_str());
+    if (!tempObjectSprite) return fail("loadSprite tempObject");
+    float tempObjectW = 0.0f;
+    float tempObjectH = 0.0f;
+    if (!SDL_GetTextureSize(tempObjectSprite, &tempObjectW, &tempObjectH)) return fail("SDL_GetTextureSize tempObject");
+    const float tempObjectDrawSize = tempObjectSize.x / (tempObjectW * spriteScale);
+    // core: a temporary object stands 150 map px right of the npcs; it is a fixed solid oval as wide as the object, its sprite comes from its image name and is drawn stretched to 50 x 50 map px
+
     std::vector<Vector2D<float>> lastFootprint;
     for (const npc& unit : npcs) lastFootprint.push_back(unit.getPos());
     std::vector<Footprint> footprints;
@@ -458,15 +496,20 @@ int main(int, char**)
                     const auto selected = std::count_if(npcs.begin(), npcs.end(), [](const npc& unit) {
                         return unit.isSelected();
                     });
+                    const bool onObject = overlaps({clicked.x, clicked.y, 0.0f, 0.0f}, objectRect(tempObject));
+                    const Vector2D<float> mark = onObject ? tempObject.getPos() : clicked;
                     for (npc& unit : npcs) {
                         if (!unit.isSelected()) continue;
-                        const Vector2D<float> target = selected > 1 ? fuzzyArrive(rng, clicked, groundArriveRad) : clicked;
+                        const Vector2D<float> target = onObject ? arriveAround(rng, tempObject)
+                            : selected > 1 ? fuzzyArrive(rng, clicked, groundArriveRad) : clicked;
+                        // movement: a right click on an object sends npcs around it instead of onto it; every selected npc, even a single one, gets an arriveAround spot with rad = max(w, h) of the object, and ground clicks are unchanged
                         if (shift) {
-                            unit.addDestination(target, clicked);
+                            unit.addDestination(target, mark);
                         } else {
-                            unit.setDestinaion(target, clicked);
+                            unit.setDestinaion(target, mark);
                         }
                     }
+                    // ui: an object target shows the arrow on the object instead of a cross; its mark is the object's pos, which the draw step recognises, while a ground click keeps the clicked point as mark
                     // movement: several npcs sent to one point arrived on the same px; when more than one is selected each gets its own fuzzyArrive point around the click, with groundArriveRad for open ground (a clicked building will pass max(h, w) of the building instead), and a single npc still goes exactly to the click
                     // input: shift right click adds another cross to walk to after the current ones; with shift held the point is added to each selected npc's destinations, without it the point replaces them
                 }
@@ -476,6 +519,10 @@ int main(int, char**)
                 if (event.button.button == SDL_BUTTON_LEFT && dragging) {
                     const SDL_FRect box = boxBetween(dragStart, toMap(mouse));
                     for (npc& unit : npcs) unit.setSelected(overlaps(box, npcRect(unit)));
+                    const bool objectHit = overlaps(box, objectRect(tempObject));
+                    if (objectHit && !tempObject.isClicked()) tempObject.onClick();
+                    tempObject.setClicked(objectHit);
+                    // core: an object is selected the same way as npcs; release sets clicked when the box touches its sprite area, calls onClick when it was not clicked before, and clears it otherwise
                     dragging = false;
                 }
                 break;
@@ -508,6 +555,8 @@ int main(int, char**)
 
         colliders.clear();
         for (const npc& unit : npcs) colliders.push_back(unit.getCollider());
+        colliders.push_back(tempObject.getCollider());
+        // core: npcs must not walk through the object; its fixed collider goes after the npcs, so colliders[i] still matches npcs[i] and only npcs are pushed
         resolveCollisions(colliders);
         for (size_t i = 0; i < npcs.size(); ++i) {
             const Vector2D<float> pushed = {
@@ -538,14 +587,20 @@ int main(int, char**)
             const Uint8 alpha = static_cast<Uint8>(255.0f * (1.0f - print.age / footprintLife));
             if (!drawSprite(renderer, sprites.footprint, print.pos, alpha, print.angle)) return fail("drawSprite footprint");
         }
+        bool objectTargeted = false;
         for (const npc& unit : npcs) {
             if (!unit.isMoving()) continue;
-            if (!drawSprite(renderer, sprites.cross, unit.getTargetedMark(), 255)) return fail("drawSprite cross");
-            for (const Vector2D<float>& queued : unit.getQueuedMark()) {
-                if (!drawSprite(renderer, sprites.cross, queued, 255)) return fail("drawSprite cross");
+            std::vector<Vector2D<float>> marks = unit.getQueuedMark();
+            marks.push_back(unit.getTargetedMark());
+            for (const Vector2D<float>& mark : marks) {
+                if (mark == tempObject.getPos()) {
+                    objectTargeted = true;
+                    continue;
+                }
+                if (!drawSprite(renderer, sprites.cross, mark, 255)) return fail("drawSprite cross");
             }
         }
-        // ui: npcs sent together showed one cross each at their spread-out points; the cross is now drawn at each destination's mark, the clicked point they share, so one click shows one cross until the last npc heading there arrives
+        // ui: npcs sent together showed one cross each at their spread-out points; the cross is drawn at each destination's mark, the clicked point they share, so one click shows one cross until the last npc heading there arrives, and a mark on the object draws no cross but sets objectTargeted for the arrow
 
         drawables.clear();
         for (const GrassClump& clump : clumps) {
@@ -556,6 +611,8 @@ int main(int, char**)
         for (const npc& unit : npcs) {
             if (!addDrawable(drawables, spriteFor(sprites, unit), unit.getPos(), 1.0f)) return fail("addDrawable npc");
         }
+        if (!addDrawable(drawables, tempObjectSprite, tempObject.getPos(), tempObjectDrawSize)) return fail("addDrawable tempObject");
+        // core: the object stands on the map like npcs and grass; it joins the feet-y sorted list so a lower npc shows in front of it
         std::stable_sort(drawables.begin(), drawables.end(), [](const Drawable& a, const Drawable& b) {
             return a.feet < b.feet;
         });
@@ -573,6 +630,11 @@ int main(int, char**)
             if (!drawSprite(renderer, sprites.selectedArrow, arrow, 255, 0.0, arrowSize)) return fail("drawSprite selectedArrow");
         }
         // ui: selected npcs showed a green outline; they now show selectedArrow.png centered arrowGap px above the head, bobbing up and down by arrowBobHeight on a sine of the clock
+        if (tempObject.isClicked() || objectTargeted) {
+            const Vector2D<float> arrow = {tempObject.getPos().x, objectRect(tempObject).y - arrowGap + arrowBob};
+            if (!drawSprite(renderer, sprites.selectedArrow, arrow, 255, 0.0, arrowSize)) return fail("drawSprite selectedArrow");
+        }
+        // ui: an object shows the arrow while it is clicked and while any npc is still walking to it (in place of the cross); the same bobbing arrow is drawn arrowGap px above the top of its sprite area
         if (dragging && !drawOutline(renderer, boxBetween(dragStart, toMap(mouse)))) return fail("drawOutline");
         // render: draw order decides what covers what; background, then ground marks (footprints fading with age, cross at each moving npc's destination), then grass and npcs sorted by feet y, then selection arrows, drag box on top
 
@@ -585,6 +647,7 @@ int main(int, char**)
     SDL_DestroyTexture(sprites.footprint);
     SDL_DestroyTexture(sprites.cross);
     SDL_DestroyTexture(sprites.selectedArrow);
+    SDL_DestroyTexture(tempObjectSprite);
     for (SDL_Texture* texture : grassSprites) SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
