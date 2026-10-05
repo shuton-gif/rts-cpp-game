@@ -59,9 +59,9 @@ const float clumpMargin = 24.0f;
 const float groundArriveRad = 50.0f;
 const int arriveTries = 30;
 const int renderMargin = 100;
-[[maybe_unused]] const int tileRatioX = 10;
-[[maybe_unused]] const int tileRatioY = 7;
-// map: the map will be laid out in tiles; a tile's width : height ratio is tileRatioX : tileRatioY (10 : 7), not used yet so marked maybe_unused to keep the build warning free
+const int tileRatioX = 10;
+const int tileRatioY = 10;
+// map: the map is laid out in tiles; one tile is tileRatioX x tileRatioY map px (10 x 10), and the selection box snaps to them
 const Vector2D<float> tempObjectSize = {300.0f, 300.0f};
 // core: a temporary object to try clicking and gathering around, made 6 times bigger; arriveTries caps redraws of a spot that overlaps the object, tempObjectSize is its sprite area in map px (300 x 300), which also sets its collider (radius 150) and the arrive spread (rad 300)
 
@@ -259,8 +259,15 @@ static SDL_FRect npcRect(const npc& unit)
 
 static SDL_FRect boxBetween(const Vector2D<float> a, const Vector2D<float> b)
 {
-    return {std::min(a.x, b.x), std::min(a.y, b.y), std::abs(a.x - b.x), std::abs(a.y - b.y)};
+    const float tileW = static_cast<float>(tileRatioX);
+    const float tileH = static_cast<float>(tileRatioY);
+    const float left = std::floor(std::min(a.x, b.x) / tileW) * tileW;
+    const float top = std::floor(std::min(a.y, b.y) / tileH) * tileH;
+    const float right = (std::floor(std::max(a.x, b.x) / tileW) + 1.0f) * tileW;
+    const float bottom = (std::floor(std::max(a.y, b.y) / tileH) + 1.0f) * tileH;
+    return {left, top, right - left, bottom - top};
 }
+// input: the selection box follows the map tiles; it covers every whole tileRatioX x tileRatioY tile from the one under the drag start to the one under the cursor, so a click is one 10 x 10 tile and a drag grows in steps of 10 on a grid fixed to the map
 
 static bool overlaps(const SDL_FRect& a, const SDL_FRect& b)
 {
