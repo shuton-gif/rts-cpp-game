@@ -59,8 +59,8 @@ const float clumpMargin = 24.0f;
 const float groundArriveRad = 50.0f;
 const int arriveTries = 30;
 const int renderMargin = 100;
-const Vector2D<float> tempObjectSize = {50.0f, 50.0f};
-// core: a temporary object to try clicking and gathering around; arriveTries caps redraws of a spot that overlaps the object, tempObjectSize is its sprite area in map px
+const Vector2D<float> tempObjectSize = {300.0f, 300.0f};
+// core: a temporary object to try clicking and gathering around, made 6 times bigger; arriveTries caps redraws of a spot that overlaps the object, tempObjectSize is its sprite area in map px (300 x 300), which also sets its collider (radius 150) and the arrive spread (rad 300)
 
 struct Footprint {
     Vector2D<float> pos;
@@ -449,14 +449,14 @@ int main(int, char**)
     npcs.emplace_back(2, Vector2D<float>{bgSize.x / 2.0f + 60.0f, bgSize.y / 2.0f + 20.0f});
     // unit: two more npcs are in the scene from the start; they stand 60 map px left and right of the first one, slightly lower
 
-    GameObject tempObject({bgSize.x / 2.0f + 150.0f, bgSize.y / 2.0f}, tempObjectSize, tempObjectSize.x / 2.0f, true, "sheild.png");
+    GameObject tempObject({bgSize.x / 2.0f + 250.0f, bgSize.y / 2.0f}, tempObjectSize, tempObjectSize.x / 2.0f, true, "tree.png");
     SDL_Texture* tempObjectSprite = loadSprite(renderer, tempObject.getImage().c_str());
     if (!tempObjectSprite) return fail("loadSprite tempObject");
     float tempObjectW = 0.0f;
     float tempObjectH = 0.0f;
     if (!SDL_GetTextureSize(tempObjectSprite, &tempObjectW, &tempObjectH)) return fail("SDL_GetTextureSize tempObject");
     const float tempObjectDrawSize = tempObjectSize.x / (tempObjectW * spriteScale);
-    // core: a temporary object stands 150 map px right of the npcs; it is a fixed solid oval as wide as the object, its sprite comes from its image name and is drawn stretched to 50 x 50 map px
+    // core: the temporary object is a tree, 250 map px right of the npcs so its bigger solid oval does not cover them at start; it is a fixed solid oval as wide as the object, its sprite comes from its image name (tree.png) and is scaled to the object's width
 
     std::vector<Vector2D<float>> lastFootprint;
     for (const npc& unit : npcs) lastFootprint.push_back(unit.getPos());
