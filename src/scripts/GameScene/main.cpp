@@ -545,7 +545,9 @@ static std::vector<PlanSpot> planLine(const Vector2D<float> from, const Vector2D
     Vector2D<int> tile = tileOf(from);
     Vector2D<int> end = tileOf(to);
     const int joined = snapPost(walls, tile);
-    snapPost(walls, end);
+    Vector2D<int> snappedEnd = end;
+    if (snapPost(walls, snappedEnd) != joined || joined < 0) end = snappedEnd;
+    // economy: a short drag near one post snapped both ends onto it and planned nothing; the end only snaps onto a different post than the start, so a line started on a post reaches the tile under the cursor
     const int firstPost = joined >= 0 ? postOf(walls[joined]) : 0;
 
     const int dx = std::abs(end.x - tile.x);
