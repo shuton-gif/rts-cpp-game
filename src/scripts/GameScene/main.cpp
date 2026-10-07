@@ -890,12 +890,12 @@ int main(int, char**)
                     for (const std::string& error : loadScripts(scriptDir, scripts)) SDL_Log("script: %s", error.c_str());
                 }
                 // ai_script: scripts are edited while the game runs; F5 parses assets/scripts again into the same map, a broken file keeps its old version and its error is logged
-                if (event.key.key == SDLK_F1 && !editor.isOpen()) {
+                if (event.key.scancode == SDL_SCANCODE_1 && (event.key.mod & SDL_KMOD_SHIFT) != 0 && !editor.isOpen()) {
                     std::vector<std::string> names;
                     for (const auto& [name, script] : scripts) names.push_back(name);
                     editor.open(window, names, scriptSource, scriptDir);
                 }
-                // ui_editor: npc scripts are edited in game; F1 opens the editor with one tab per loaded script, and F1 or Esc inside it closes it before the game sees the key
+                // ui_editor: npc scripts are edited in game; Shift+1 (by scancode, since SDL3 keycodes follow shift) opens the editor with one tab per loaded script, and Esc inside it closes it before the game sees the key
                 if (event.key.key == SDLK_B) {
                     placing = !placing;
                     dragging = false;

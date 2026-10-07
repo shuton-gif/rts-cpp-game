@@ -309,7 +309,7 @@ bool scriptEditor::handleKey(const SDL_KeyboardEvent& key, float density)
         this->completing = false;
         return true;
     }
-    if (code == SDLK_F1 || code == SDLK_ESCAPE) {
+    if (code == SDLK_ESCAPE) {
         this->close();
         return true;
     }
@@ -388,7 +388,7 @@ bool scriptEditor::handleKey(const SDL_KeyboardEvent& key, float density)
     this->keepCursorVisible(visible);
     return true;
 }
-// ui_editor: the game must not react to typing while the editor is open, and typing skill names and args by hand was slow and error prone; F1 or Escape close it, Ctrl or Cmd+S saves, arrows, Home/End and PageUp/PageDown (one screen of rows) move the cursor and close the popup, Backspace reruns the suggestions, Delete and Return (closes the popup) edit, Tab with the popup closed inserts 2 spaces, and every key is consumed
+// ui_editor: the game must not react to typing while the editor is open, and typing skill names and args by hand was slow and error prone; Escape closes it (F1 no longer does, so every key but Escape types), Ctrl or Cmd+S saves, arrows, Home/End and PageUp/PageDown (one screen of rows) move the cursor and close the popup, Backspace reruns the suggestions, Delete and Return (closes the popup) edit, Tab with the popup closed inserts 2 spaces, and every key is consumed
 
 bool scriptEditor::handleMouse(const SDL_Event& event, float density)
 {
