@@ -108,6 +108,33 @@ void npc::pushTo(Vector2D<float> pushed)
 }
 // movement: a pushed npc must not fight the push; a standing npc stays where it was pushed, and a walking one that is pushed within arriveSlack of its destination counts as arrived there, so npcs sent to nearly the same spot settle side by side instead of shoving forever
 
+void npc::setAim(Vector2D<float> point)
+{
+    const Vector2D<float> delta = {point.x - this->pos.x, point.y - this->pos.y};
+    const float length = std::hypot(delta.x, delta.y);
+    if (length <= 0.0f) return;
+    this->aim = {delta.x / length, delta.y / length};
+}
+// combat: the bow needs a direction, not a point; the offset from the feet to point is divided by its length, and a zero offset has no direction so the last aim stays
+
+void npc::faceAim()
+{
+    const int octant = static_cast<int>(std::lround(std::atan2(this->aim.y, this->aim.x) / 0.78539816f));
+    switch (octant) {
+    case 0: this->facing = Facing::Right; break;
+    case 1: this->facing = Facing::DownRight; break;
+    case 2: this->facing = Facing::Down; break;
+    case 3: this->facing = Facing::DownLeft; break;
+    case -1: this->facing = Facing::UpRight; break;
+    case -2: this->facing = Facing::Up; break;
+    case -3: this->facing = Facing::UpLeft; break;
+    default: this->facing = Facing::Left; break;
+    }
+    if (octant == 3 || octant == -3 || octant == 4 || octant == -4) this->facingLeft = true;
+    if (octant == 0 || octant == 1 || octant == -1) this->facingLeft = false;
+}
+// combat: a shooting npc must look where it shoots; the aim angle is rounded to the nearest of 8 facings (45 degree steps, map y down), left-side facings set facingLeft and right-side ones clear it, and straight up or down keep the last side like walking does
+
 void npc::setSelected(bool selected)
 {
     this->selected = selected;
@@ -126,4 +153,6 @@ bool npc::isMoving() const { return this->pos != this->targetedPos; }
 bool npc::isSelected() const { return this->selected; }
 int npc::getPlayer() const { return this->player; }
 // unit: main.cpp picks the npc's sprite color from its owner; read-only getter
+Vector2D<float> npc::getAim() const { return this->aim; }
+// combat: the bow shoots along its holder's aim; read-only getter
 // unit: main.cpp needs npc state to draw and select it; read-only getters, isMoving is an exact compare because moveX/moveY snap onto the target

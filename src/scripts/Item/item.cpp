@@ -15,6 +15,12 @@ void item::use(npc&, GameObject*)
 }
 // unit_item: a plain item does nothing when used; each item type (axe, apple, ...) overrides use with its own action on the npc using it
 
+bool item::swings() const
+{
+    return true;
+}
+// combat: items swing unless their type says otherwise; the bow overrides this with false
+
 bool item::startUse()
 {
     if (!this->isHeld() || this->isUsing()) return false;
@@ -40,19 +46,19 @@ bool item::isUsing() const
 
 float item::getUseOffset() const
 {
-    if (!this->isUsing()) return 0.0f;
+    if (!this->isUsing() || !this->swings()) return 0.0f;
     const float t = this->useElapsed / this->useDuration;
     return -useRise + (useRise + useDip) * t * t;
 }
-// animation: the sprite starts useRise map px above its held spot and ends useDip map px below it; t is squared (ease-in) so it starts slow and speeds up like a swing, and it is 0 when not in use
+// animation: the sprite starts useRise map px above its held spot and ends useDip map px below it; t is squared (ease-in) so it starts slow and speeds up like a swing, and it is 0 when not in use or for an item that does not swing
 
 float item::getUseAngle() const
 {
-    if (!this->isUsing()) return 0.0f;
+    if (!this->isUsing() || !this->swings()) return 0.0f;
     const float t = this->useElapsed / this->useDuration;
     return useTurn * t * t;
 }
-// animation: the item turns from upright (0) to flat (useTurn degrees) with the same t squared as the drop, so turning and coming down stay in step; 0 when not in use
+// animation: the item turns from upright (0) to flat (useTurn degrees) with the same t squared as the drop, so turning and coming down stay in step; 0 when not in use or for an item that does not swing
 
 void item::pickUp(int id)
 {

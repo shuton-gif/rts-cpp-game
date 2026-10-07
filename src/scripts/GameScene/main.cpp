@@ -7,10 +7,12 @@
 #include <string>
 #include <vector>
 
+#include "Arrow/arrow.h"
 #include "Collision/collision.h"
 #include "GameObject/gameObject.h"
 #include "Grass/grass.h"
 #include "Item/axe.h"
+#include "Item/bow.h"
 #include "Item/item.h"
 #include "NPC/npc.h"
 #include "Tree/tree.h"
@@ -593,6 +595,8 @@ int main(int, char**)
         {"hoe.png", {-140.0f, 140.0f}},
     };
     // unit_item: more tools to try picking up; a pick-axe, a bow and a hoe lie further left and below, next to the axe, sword and shield
+    std::vector<arrow> arrows;
+    // combat: arrows shot by bows; declared before items so it outlives the bows that shoot into it
     std::vector<std::unique_ptr<item>> items;
     std::vector<SDL_Texture*> itemSprites;
     std::vector<SDL_Texture*> itemTextures;
@@ -607,6 +611,9 @@ int main(int, char**)
         const Vector2D<float> size = {w * spriteScale, h * spriteScale};
         if (std::string(spawn.image) == "axe.png") {
             items.push_back(std::make_unique<axe>(pos, size, spawn.image));
+        } else if (std::string(spawn.image) == "bow.png") {
+            items.push_back(std::make_unique<bow>(pos, size, spawn.image, arrows));
+            // combat: the bow spawn is a `bow` so using it shoots into arrows
         } else {
             items.push_back(std::make_unique<item>(pos, size, spawn.image));
         }
@@ -622,6 +629,11 @@ int main(int, char**)
     float plankH = 0.0f;
     if (!SDL_GetTextureSize(plankSprite, &plankW, &plankH)) return fail("SDL_GetTextureSize plank");
     bool planksDropped = false;
+
+    SDL_Texture* arrowSprite = loadSprite(renderer, "arrow.png");
+    if (!arrowSprite) return fail("loadSprite arrow");
+    itemTextures.push_back(arrowSprite);
+    // combat: every arrow shares one sprite, owned by itemTextures like the plank
     // economy: a felled tree drops planks; the plank sprite is loaded once and shared by every plank, and planksDropped makes the drop happen only once
 
     std::vector<Vector2D<float>> lastFootprint;
@@ -653,10 +665,15 @@ int main(int, char**)
                 }
                 // unit_item: Q makes every selected npc drop the item it holds; the item lands on the ground where it was held, at the npc's feet line
                 if (event.key.key == SDLK_E) {
+                    for (npc& unit : npcs) {
+                        if (unit.isSelected()) unit.setAim(toMap(mouse));
+                    }
                     for (const std::unique_ptr<item>& thing : items) {
-                        if (thing->isHeld() && npcs[thing->getHolder()].isSelected()) thing->startUse();
+                        if (!thing->isHeld() || !npcs[thing->getHolder()].isSelected()) continue;
+                        if (thing->startUse() && !thing->swings()) thing->use(npcs[thing->getHolder()], nullptr);
                     }
                 }
+                // combat: E aims every selected npc at the cursor first; an item that does not swing (the bow) is used right away when its use starts, and useDuration then runs as a cooldown in which E is ignored
                 // animation: E makes every selected npc use the item it holds; startUse ignores an item that is already swinging
                 break;
             case SDL_EVENT_MOUSE_MOTION:
@@ -804,7 +821,7 @@ int main(int, char**)
 
             if (!thing.isHeld()) continue;
             npc& holder = npcs[thing.getHolder()];
-            if (thing.updateUse(deltaTime)) {
+            if (thing.updateUse(deltaTime) && thing.swings()) {
                 GameObject* target = nullptr;
                 if (!tempObject.isFelled()) {
                     Collider hitbox = tempObject.getChopHitbox();
@@ -814,6 +831,7 @@ int main(int, char**)
                 thing.use(holder, target);
             }
             // animation: the swing plays over the item's useDuration and use runs once on the frame it ends
+            // combat: an item that does not swing was already used at the start, so its end only finishes the cooldown
             // economy: a swing hits the tree when the holder's feet oval touches the tree's chop hitbox, which is chopScale times its solid oval, so an npc pushed against the trunk always hits; otherwise the target is nullptr and the swing misses
             const float side = holder.isFacingLeft() ? -1.0f : 1.0f;
             const float reach = holder.getSize().x * spriteScale / 2.0f + holdGap + thing.getSize().x / 2.0f;
@@ -821,6 +839,10 @@ int main(int, char**)
             // animation: a swinging item is shifted up or down by getUseOffset from its held spot, 0 when idle
         }
         // unit_item: a held item stays at its holder's side after the npcs moved; its center is half the npc width + holdGap + half the item width from the npc's center, on the right, or on the left when the npc faces left, and up or down keep the last side because isFacingLeft only changes on a left or right step
+
+        for (arrow& shot : arrows) shot.update(deltaTime);
+        std::erase_if(arrows, [](const arrow& shot) { return shot.isGone(); });
+        // combat: arrows fly after the bows fired this frame; each moves and ages by deltaTime, and one is erased arrowLife ms after its shot
 
         if (tempObject.isFelled() && !planksDropped) {
             for (int i = 0; i < plankCount; ++i) {
@@ -891,6 +913,10 @@ int main(int, char**)
             }
             // animation: a swinging item turns outward around its handle, clockwise on the right and counter-clockwise on the left; its center is swung around the bottom pivot by the angle, then the sprite is turned by the same angle about that center
         }
+        for (const arrow& shot : arrows) {
+            drawables.push_back({arrowSprite, shot.getPos(), 1.0f, shot.getFeet(), SDL_FLIP_NONE, shot.getAngle()});
+        }
+        // combat: an arrow sorts by the ground point under it, so it passes behind things lower on the map; it is drawn centered on its pos, turned along its flight
         // unit_item: a ground item sorts by its own feet like everything else; a held item sorts just below its holder's feet so it always shows in front of that npc, and it is mirrored while held on the left
         std::stable_sort(drawables.begin(), drawables.end(), [](const Drawable& a, const Drawable& b) {
             return a.feet < b.feet;

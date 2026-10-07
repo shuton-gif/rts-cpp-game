@@ -20,17 +20,19 @@ FetchContent_MakeAvailable(SDL3)
 # build: SDL3 must build the same on every machine and sprites load with SDL_LoadPNG (new in 3.4); an installed SDL3 3.4+ is used when found, else the pinned tag is fetched and built from source
 
 add_executable(rts
+    src/scripts/Arrow/arrow.cpp
     src/scripts/Collision/collision.cpp
     src/scripts/GameObject/gameObject.cpp
     src/scripts/GameScene/main.cpp
     src/scripts/Grass/grass.cpp
     src/scripts/Item/axe.cpp
+    src/scripts/Item/bow.cpp
     src/scripts/Item/item.cpp
     src/scripts/NPC/npc.cpp
     src/scripts/Tree/tree.cpp
 )
 target_include_directories(rts PRIVATE src/scripts)
-# build: axe.cpp and tree.cpp were not compiled; every source under src/scripts is listed in `rts` and src/scripts is the include root
+# build: arrow.cpp and bow.cpp are new; every source under src/scripts is listed in `rts` and src/scripts is the include root
 target_link_libraries(rts PRIVATE SDL3::SDL3)
 
 add_custom_command(TARGET rts POST_BUILD

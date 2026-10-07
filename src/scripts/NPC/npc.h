@@ -50,6 +50,9 @@ private:
     int player = 0;
     // unit: npcs belong to a player and are drawn in that player's color; player is the owner index, 0 = P1
 
+    Vector2D<float> aim = {1.0f, 0.0f};
+    // combat: a bow shoots where its npc aims; aim is a unit vector from the feet, right until set
+
 public:
     int id;
 
@@ -64,6 +67,10 @@ public:
     void addDestination(Vector2D<float> clicked, Vector2D<float> mark);
     void setSelected(bool selected);
     void pushTo(Vector2D<float> pushed);
+    void setAim(Vector2D<float> point);
+    // combat: E aims every selected npc at the cursor; setAim turns the direction from the feet to point into a unit vector, and a point on the feet keeps the old aim
+    void faceAim();
+    // combat: a shooting npc turns to its aim; faceAim sets facing to the nearest of the 8 facings, until the next step turns it again
 
     Collider getCollider() const;
     // movement: npcs must not walk through or stand on each other; getCollider gives the solid oval at the feet (20 x 10 map px) and pushTo takes the position collision moved it to
@@ -78,6 +85,7 @@ public:
     bool isMoving() const;
     bool isSelected() const;
     int getPlayer() const;
+    Vector2D<float> getAim() const;
 };
 // unit: main.cpp could not create or draw an npc while the class lived inside npc.cpp; declaration is now a header, pos is the center bottom (feet) of the sprite in map px, speed is px per ms, and getters expose state without SDL
 

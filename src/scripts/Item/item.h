@@ -29,6 +29,9 @@ public:
     virtual void use(npc& user, GameObject* target);
     // economy: a tool acts on what is in front of the npc; target is the object within reach when the swing ends, nullptr on a miss
 
+    virtual bool swings() const;
+    // combat: a bow fires the moment it is used instead of swinging; swings is true for tools that swing and use at the end, false for items that use at the start and keep still, with useDuration as their cooldown
+
     bool startUse();
     bool updateUse(float deltaTime);
     bool isUsing() const;
