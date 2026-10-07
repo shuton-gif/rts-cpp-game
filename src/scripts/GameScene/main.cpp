@@ -77,6 +77,8 @@ const float arrowGap = 20.0f;
 const float arrowBobHeight = 4.0f;
 const float arrowSize = 0.5f;
 const Uint8 selectFillAlpha = 153;
+const Uint8 hitboxAlpha = 179;
+// test: dev hitbox view is red at 0.7 opacity
 const float grassSize = 0.75f;
 const int clumpCount = 60;
 const int clumpTries = 30;
@@ -102,7 +104,7 @@ const float hpBarGap = 8.0f;
 const int treeTilesX = 30;
 const int treeTilesY = 32;
 const Vector2D<float> treeSize = {static_cast<float>(treeTilesX * tileRatioX), static_cast<float>(treeTilesY * tileRatioY)};
-// economy: trees sit on the tile grid like walls; a tree covers treeTilesX x treeTilesY tiles (300 x 320 map px), the 15 x 16 sprite's shape, which also sets its collider (radius 150) and the arrive spread (rad 320); arriveTries caps redraws of a spot that overlaps it
+// economy: trees sit on the tile grid like walls; a tree covers treeTilesX x treeTilesY tiles (300 x 320 map px), the 15 x 16 sprite's shape, which also sets the arrive spread (rad 320), while its collider covers only the trunk (radius 50); arriveTries caps redraws of a spot that overlaps it
 const Vector2D<float> treeSpots[] = {
     {250.0f, 0.0f},
     {650.0f, -250.0f},
@@ -381,6 +383,18 @@ static bool drawOutline(SDL_Renderer* renderer, SDL_FRect rect)
 }
 // ui: the drag select area needs to be visible on the green map; a map-px rect is filled white at 0.6 opacity with alpha blending, then outlined with a solid white 1 px rectangle
 
+static bool drawHitbox(SDL_Renderer* renderer, const Collider& oval)
+{
+    const SDL_FRect bound = {oval.pos.x - oval.radius, oval.pos.y - oval.radius / 2.0f, oval.radius * 2.0f, oval.radius};
+    if (!inRenderArea(bound)) return true;
+    const Vector2D<float> cam = cameraPx();
+    const SDL_FRect rect = {std::floor(bound.x) - cam.x, std::floor(bound.y) - cam.y, bound.w, bound.h};
+    if (!SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND)) return false;
+    if (!SDL_SetRenderDrawColor(renderer, 255, 0, 0, hitboxAlpha)) return false;
+    return SDL_RenderFillRect(renderer, &rect);
+}
+// test: hitboxes are tuned by eye; an oval collider is shown as its bounding rect (2 x radius wide, radius high, centered on pos), filled red at hitboxAlpha, skipped outside the render area
+
 static bool drawHpBar(SDL_Renderer* renderer, const Vector2D<float> feet, const float left, const float width = hpBarSize.x)
 {
     const SDL_FRect bar = {std::floor(feet.x - width / 2.0f), std::floor(feet.y + hpBarGap), width, hpBarSize.y};
@@ -465,9 +479,10 @@ static SDL_FRect objectRect(const GameObject& object)
 
 static Vector2D<float> arriveAround(std::mt19937& rng, const GameObject& object)
 {
-    const Vector2D<float> pos = object.getPos();
-    const Vector2D<float> size = object.getSize();
-    const float rad = std::max(size.x, size.y);
+    const Collider body = object.getCollider();
+    const Vector2D<float> pos = body.pos;
+    const float rad = std::max(body.radius * 2.0f, body.radius) + colliderRadius;
+    // movement: npcs were spread up to max(w, h) of the sprite, far from a small trunk; the spread is now centered on the solid oval with rad = max(w, h) of the oval (its width, 2 x radius) plus one npc radius, so there is always a ring outside the oval where an npc fits
 
     Vector2D<float> spot = fuzzyArrive(rng, pos, rad);
     for (int attempt = 0; attempt < arriveTries; ++attempt) {
@@ -478,7 +493,7 @@ static Vector2D<float> arriveAround(std::mt19937& rng, const GameObject& object)
     }
     return spot;
 }
-// movement: npcs sent to an object spread around it with rad = max(w, h); a spot where an npc would overlap the object's solid oval could never be reached, so it is drawn again (up to arriveTries times) until the npc fits beside the object
+// movement: npcs sent to an object spread around its solid oval; a spot where an npc would overlap the object's solid oval could never be reached, so it is drawn again (up to arriveTries times) until the npc fits beside the object
 
 static bool handsFree(const std::vector<std::unique_ptr<item>>& items, const int id)
 {
@@ -809,6 +824,9 @@ int main(int, char**)
     std::vector<wall> walls;
     std::vector<int> jobs(npcs.size(), -1);
     bool placing = false;
+    bool showSolid = false;
+    bool showChop = false;
+    // test: dev views, U shows every solid oval and I every chop hitbox
     // economy: walls are planned by the player and built by npcs; a segment is a horizontal wall or a vertical column of posts (see WallLook), walls keeps plans and built posts by index, jobs[id] is the wall npc id works on (-1 none), and placing is on between B and placing a row
 
     SDL_Texture* arrowSprite = loadSprite(renderer, "arrow.png");
@@ -845,6 +863,9 @@ int main(int, char**)
                         running = false;
                     }
                 }
+                if (event.key.key == SDLK_U) showSolid = !showSolid;
+                if (event.key.key == SDLK_I) showChop = !showChop;
+                // test: U and I toggle the dev hitbox views
                 if (event.key.key == SDLK_B) {
                     placing = !placing;
                     dragging = false;
@@ -1294,6 +1315,26 @@ int main(int, char**)
             if (!drawSprite(renderer, item.texture, item.center, item.alpha, item.angle, item.size, item.flip)) return fail("drawSprite drawable");
         }
         // render: grass always drew under the npc even when it stood lower on the map; grass strips and npcs now go in one list sorted by feet y, so whatever is lower on the map is drawn later and shows in front
+        if (showSolid) {
+            for (const npc& unit : npcs) {
+                if (!drawHitbox(renderer, unit.getCollider())) return fail("drawHitbox npc");
+            }
+            for (const tree& stand : trees) {
+                if (!stand.isFelled() && !drawHitbox(renderer, stand.getCollider())) return fail("drawHitbox tree");
+            }
+            for (const wall& segment : walls) {
+                if (segment.isBuilt() && !drawHitbox(renderer, segment.getCollider())) return fail("drawHitbox wall");
+            }
+        }
+        if (showChop) {
+            for (const tree& stand : trees) {
+                if (!stand.isFelled() && !drawHitbox(renderer, stand.getChopHitbox())) return fail("drawHitbox chop");
+            }
+            for (const wall& segment : walls) {
+                if (segment.isBuilt() && !drawHitbox(renderer, segment.getHitbox())) return fail("drawHitbox wall hit");
+            }
+        }
+        // test: the dev views draw over every sprite; U shows what is solid now (npcs, standing trees, built walls) and I what an axe can hit (standing trees, built walls)
 
         const float arrowBob = std::sin(static_cast<float>(SDL_GetTicks()) / 300.0f) * arrowBobHeight;
         for (const npc& unit : npcs) {

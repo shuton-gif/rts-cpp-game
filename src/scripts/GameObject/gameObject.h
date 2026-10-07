@@ -24,7 +24,8 @@ public:
     virtual void onClick();
     void setClicked(bool clicked);
 
-    Collider getCollider() const;
+    virtual Collider getCollider() const;
+    // economy: a tree's solid oval sits on its trunk, not on its feet point; getCollider is virtual so a type can place its own oval, also when used as a GameObject
     Vector2D<float> getPos() const;
     Vector2D<float> getSize() const;
     const std::string& getImage() const;

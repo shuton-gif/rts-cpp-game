@@ -3,12 +3,20 @@
 #include <utility>
 
 tree::tree(Vector2D<float> pos, Vector2D<float> size, std::string image, int maxHp)
-    : GameObject(pos, size, size.x / 2.0f, true, std::move(image))
+    : GameObject(pos, size, size.x * trunkWidth / 2.0f, true, std::move(image))
 {
     this->maxHp = maxHp;
     this->hp = maxHp;
 }
-// economy: a tree starts at full hp; it is solid and never pushed, with an oval as wide as the tree
+// economy: a tree starts at full hp; it is solid and never pushed, with an oval as wide as its trunk (100 x 50 map px for a 300 px tree)
+
+Collider tree::getCollider() const
+{
+    Collider oval = GameObject::getCollider();
+    oval.pos.y -= oval.radius / 2.0f;
+    return oval;
+}
+// economy: an oval centered on the feet stuck out below the trunk; moving it up by its half height puts its bottom on the bottom of the trunk
 
 bool tree::chop(int damage)
 {

@@ -7,6 +7,8 @@
 #include "Vector2D.h"
 
 const float chopScale = 1.5f;
+const float trunkWidth = 5.0f / 15.0f;
+// economy: the solid oval covered the whole crown; the trunk is 5 of the sprite's 15 px wide, so the oval is trunkWidth of the tree's width
 
 class tree : public GameObject
 {
@@ -17,6 +19,9 @@ private:
 
 public:
     tree(Vector2D<float> pos, Vector2D<float> size, std::string image, int maxHp = 5);
+
+    Collider getCollider() const override;
+    // economy: the oval's bottom sits on the feet (the bottom of the trunk); its center is lifted by its half height, radius / 2
 
     bool chop(int damage);
     Collider getChopHitbox() const;
