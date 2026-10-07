@@ -19,6 +19,8 @@
 #include "Item/axe.h"
 #include "Item/bow.h"
 #include "Item/item.h"
+#include "Map/chunk.h"
+// map: a 40000 map cannot hold all its grass and trees; main.cpp owns one chunkStore that streams them in and out around the view and npcs
 #include "Movement/arrive.h"
 #include "NPC/npc.h"
 // ai_script: npc behaviors moved out of main into text scripts; agent runs them, script loads them, and arrive holds the shared arrive helpers
@@ -42,7 +44,7 @@ struct IntervalTimer {
 };
 // core: camera speed must not depend on frame rate; tick() returns ms since the previous call from the ns clock and resets
 
-const Vector2D<float> bgSize = {4000.0f, 4000.0f};
+const Vector2D<float> bgSize = {40000.0f, 40000.0f};
 const float edgeMargin = 8.0f;
 
 Vector2D<float> camera = {0.0f, 0.0f};
@@ -89,9 +91,8 @@ const Uint8 selectFillAlpha = 153;
 const Uint8 hitboxAlpha = 179;
 // test: dev hitbox view is red at 0.7 opacity
 const float grassSize = 0.75f;
-const int clumpCount = 60;
-const int clumpTries = 30;
 const float clumpMargin = 24.0f;
+// map: clump counts and tries moved to Map/chunk.h, which makes grass per chunk; grassSize and clumpMargin stay as the clump look handed to the chunk store and used for culling
 // ai_script: groundArriveRad and arriveTries were main's own; they moved to Movement/arrive.h with the arrive helpers that use them
 const int renderMargin = 100;
 const int tileRatioX = 10;
@@ -643,31 +644,7 @@ static SDL_FRect clumpRect(const GrassClump& clump)
     const float h = clump.size.y * spriteScale * grassSize + clumpMargin;
     return {clump.pos.x - w / 2.0f, clump.pos.y - h / 2.0f, w, h};
 }
-
-static std::vector<GrassClump> scatterGrassClumps(std::mt19937& rng, const int spriteCount)
-{
-    std::vector<GrassClump> clumps;
-    for (int i = 0; i < clumpCount; ++i) {
-        GrassClump clump = makeGrassClump(rng, {0.0f, 0.0f}, spriteCount);
-        const SDL_FRect bound = clumpRect(clump);
-        std::uniform_real_distribution<float> x(bound.w / 2.0f, bgSize.x - bound.w / 2.0f);
-        std::uniform_real_distribution<float> y(bound.h / 2.0f, bgSize.y - bound.h / 2.0f);
-
-        for (int attempt = 0; attempt < clumpTries; ++attempt) {
-            clump.pos = {std::floor(x(rng)), std::floor(y(rng))};
-            const SDL_FRect rect = clumpRect(clump);
-            const bool free = std::none_of(clumps.begin(), clumps.end(), [&](const GrassClump& other) {
-                return overlaps(rect, clumpRect(other));
-            });
-            if (free) {
-                clumps.push_back(clump);
-                break;
-            }
-        }
-    }
-    return clumps;
-}
-// map: clumps are plotted at random over the whole map; each of clumpCount clumps is made, then given random spots inside the map until its bound touches no other clump, and is skipped if clumpTries spots all collide
+// map: clumps are scattered per chunk by Map/chunk.h now, not over the whole map at start; clumpRect is left only for render culling, a clump's sprite bound in map px grown by clumpMargin
 
 static int fail(const char* what)
 {
@@ -723,7 +700,6 @@ int main(int, char**)
     if (grassSprites.empty()) return fail("loadGrassSprites");
 
     std::mt19937 rng(std::random_device{}());
-    const std::vector<GrassClump> clumps = scatterGrassClumps(rng, static_cast<int>(grassSprites.size()));
 
     std::vector<Drawable> drawables;
     std::vector<Collider> colliders;
@@ -745,6 +721,9 @@ int main(int, char**)
         // economy: a tree is snapped so its sides and feet fall on grid lines; with an even treeTilesX its center is on a grid line, with an odd one on a tile center like a wall
     }
     // economy: the single temporary tree became a list; one tree stands at each of treeSpots, all the same size, sharing one sprite
+    std::uint32_t worldSeed = std::random_device{}();
+    chunkStore chunks(worldSeed, ChunkLook{bgSize, treeSize, {static_cast<float>(tileRatioX), static_cast<float>(tileRatioY)}, spriteScale * grassSize, clumpMargin, static_cast<int>(grassSprites.size())});
+    // map: a 40000 map cannot hold all its grass and trees, so nothing is scattered at start any more; the chunk store is made after the fixed treeSpots trees so they are never erased, and it regrows the same grass and trees per chunk from worldSeed as the view and npcs come near
     SDL_Texture* treeSprite = loadSprite(renderer, "tree.png");
     if (!treeSprite) return fail("loadSprite tree");
     float treeW = 0.0f;
@@ -1073,6 +1052,33 @@ int main(int, char**)
         for (Footprint& print : footprints) print.age += deltaTime;
         std::erase_if(footprints, [](const Footprint& print) { return print.age >= footprintLife; });
 
+        const Vector2D<float> viewMin = cameraPx();
+        const Vector2D<float> viewSpan = viewSize(viewport);
+        std::vector<Vector2D<float>> npcFeet;
+        for (const npc& unit : npcs) npcFeet.push_back(unit.getPos());
+        const std::vector<int> remap = chunks.update(viewMin, {viewMin.x + viewSpan.x, viewMin.y + viewSpan.y}, npcFeet, sightRange, trees, walls);
+        if (!remap.empty()) {
+            std::vector<bool> keptDropped;
+            std::vector<int> keptLastHp;
+            std::vector<float> keptHitAge;
+            for (size_t t = 0; t < remap.size(); ++t) {
+                if (remap[t] < 0) continue;
+                keptDropped.push_back(planksDropped[t]);
+                keptLastHp.push_back(treeLastHp[t]);
+                keptHitAge.push_back(treeHitAge[t]);
+            }
+            planksDropped = std::move(keptDropped);
+            treeLastHp = std::move(keptLastHp);
+            treeHitAge = std::move(keptHitAge);
+            for (agent& brain : agents) brain.remapTrees(remap);
+        }
+        for (size_t t = planksDropped.size(); t < trees.size(); ++t) {
+            planksDropped.push_back(trees[t].isFelled());
+            treeLastHp.push_back(trees[t].getHp());
+            treeHitAge.push_back(hpBarShow);
+        }
+        // map: only chunks near the view or an npc may hold grass and trees, and this runs after the camera moved but before solids, agents or any tree array read tree indexes this frame; the store frees far chunks and loads near ones, an erase shifts planksDropped, treeLastHp, treeHitAge and every agent's tree slots to the new indexes, and each newly loaded tree gets entries with planks already dropped if it comes back felled and its hp bar hidden
+
         solids.clear();
         for (const tree& stand : trees) {
             if (!stand.isFelled()) solids.push_back(stand.getCollider());
@@ -1081,7 +1087,6 @@ int main(int, char**)
             if (segment.isBuilt()) solids.push_back(segment.getCollider());
         }
         if (solids.size() != solidCount) {
-            nav.build(solids, bgSize);
             solidCount = solids.size();
             for (npc& unit : npcs) {
                 if (unit.isMoving()) unit.replan();
@@ -1089,10 +1094,14 @@ int main(int, char**)
         }
         std::vector<Vector2D<float>> before;
         for (npc& unit : npcs) {
-            if (unit.needsRoute()) unit.setRoute(nav.findPath(unit.getPos(), unit.getTargetedPos()));
+            if (unit.needsRoute()) {
+                const navWindow area = navWindowFor(unit.getPos(), unit.getTargetedPos(), bgSize);
+                nav.build(solids, area.origin, area.size);
+                unit.setRoute(nav.findPath(unit.getPos(), unit.getTargetedPos()));
+            }
             before.push_back(unit.getPos());
         }
-        // pathfinding: npcs got stuck on a tree or wall between them and their destination; the grid is rebuilt from the standing trees and built walls whenever their count changes and every moving npc replans, each npc without a path gets one around them, and before keeps each npc's position for the stuck check
+        // pathfinding: a grid over the whole 40000 map no longer fits in memory; every moving npc replans when the count of standing trees and built walls changes (felled, built, or streamed in or out), and each npc without a path gets the grid built over just the window of its trip from this frame's solids, then a path around them, while before keeps each npc's position for the stuck check
         for (npc& unit : npcs) unit.update(deltaTime);
 
         colliders.clear();
@@ -1275,11 +1284,11 @@ int main(int, char**)
         // pathfinding: the way an npc takes around trees and walls must be visible; every moving npc draws a white line pathWidth map px wide on the ground from its feet through each waypoint to targetedPos, in map px minus the camera like the sprites, and later rects set their own color
 
         drawables.clear();
-        for (const GrassClump& clump : clumps) {
-            if (!inRenderArea(clumpRect(clump))) continue;
-            if (!addGrassClump(drawables, grassSprites, clump)) return fail("addGrassClump");
+        for (const GrassClump* clump : chunks.clumps()) {
+            if (!inRenderArea(clumpRect(*clump))) continue;
+            if (!addGrassClump(drawables, grassSprites, *clump)) return fail("addGrassClump");
         }
-        // render: the whole map holds clumps and most are off screen; only clumps whose bound touches the render area (screen + renderMargin) are queued for sorting and drawing
+        // render: grass now lives in the loaded chunks and many of their clumps are still off screen; every clump the chunk store lists is checked, and only those whose bound touches the render area (screen + renderMargin) are queued for sorting and drawing
         for (const npc& unit : npcs) {
             if (!addDrawable(drawables, spriteFor(sprites, unit), unit.getPos(), 1.0f)) return fail("addDrawable npc");
         }

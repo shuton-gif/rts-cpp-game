@@ -65,6 +65,16 @@ void agent::forget(const item* thing)
 }
 // ai_script: a slot must not point at an erased item; main calls forget before erasing, and every slot holding that item is dropped
 
+void agent::remapTrees(const std::vector<int>& newIndex)
+{
+    for (auto& [name, slot] : this->slots) {
+        if (slot.kind != Slot::Kind::Tree) continue;
+        const bool known = slot.index >= 0 && static_cast<std::size_t>(slot.index) < newIndex.size();
+        slot.index = known ? newIndex[slot.index] : -1;
+    }
+}
+// ai_script: an unloaded chunk erases its trees and shifts the rest; every tree slot takes its index from main's old to new table, and an index outside the table becomes -1 so valid is false and find picks a new tree
+
 void agent::run(World& world, const std::map<std::string, Script>& scripts)
 {
     if (!this->active) return;

@@ -33,6 +33,8 @@ add_executable(rts
     src/scripts/Item/item.cpp
     src/scripts/Movement/arrive.cpp
     src/scripts/Pathfinding/path.cpp
+    src/scripts/Map/chunk.cpp
+# map: grass and trees load per chunk near the view instead of over the whole map; chunk.cpp holds the chunk store
     src/scripts/NPC/npc.cpp
     src/scripts/Tree/tree.cpp
     src/scripts/Wall/wall.cpp

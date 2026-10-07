@@ -85,6 +85,9 @@ public:
     void run(World& world, const std::map<std::string, Script>& scripts);
     // ai_script: main gives an npc a behavior on right click; start replaces the old one and reserves the slot items, stop ends it and frees every item it was fetching, forget drops slots of an item main is about to erase, and run plays one frame of the script
 
+    void remapTrees(const std::vector<int>& newIndex);
+    // ai_script: trees stream in and out by chunk, so erasing one shifts the indexes in tree slots; remapTrees moves each tree slot to its new index from main's old to new table, or to -1 (gone, so valid is false) when the tree was erased
+
     bool isActive() const;
     const std::string& getScript() const;
 };
