@@ -2,11 +2,12 @@
 
 #include <cmath>
 
-npc::npc(int id, Vector2D<float> pos)
+npc::npc(int id, Vector2D<float> pos, int player)
 {
     this->id = id;
     this->pos = pos;
     this->targetedPos = pos;
+    this->player = player;
 }
 // unit: targetedPos was uninitialized so a new npc walked toward garbage; it now starts at its own position and stands still
 
@@ -123,4 +124,6 @@ Facing npc::getFacing() const { return this->facing; }
 bool npc::isFacingLeft() const { return this->facingLeft; }
 bool npc::isMoving() const { return this->pos != this->targetedPos; }
 bool npc::isSelected() const { return this->selected; }
+int npc::getPlayer() const { return this->player; }
+// unit: main.cpp picks the npc's sprite color from its owner; read-only getter
 // unit: main.cpp needs npc state to draw and select it; read-only getters, isMoving is an exact compare because moveX/moveY snap onto the target

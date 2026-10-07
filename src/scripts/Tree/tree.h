@@ -6,6 +6,8 @@
 #include "GameObject/gameObject.h"
 #include "Vector2D.h"
 
+const float chopScale = 1.5f;
+
 class tree : public GameObject
 {
 
@@ -17,6 +19,8 @@ public:
     tree(Vector2D<float> pos, Vector2D<float> size, std::string image, int maxHp = 5);
 
     bool chop(int damage);
+    Collider getChopHitbox() const;
+    // economy: chop hits were hit or miss because they used the solid oval npcs are pushed out of; the chop hitbox is the same oval scaled by chopScale, so an npc standing against the trunk is always well inside it
 
     int getHp() const;
     int getMaxHp() const;

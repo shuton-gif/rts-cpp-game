@@ -47,10 +47,13 @@ private:
 
     float speed = 0.2f;
 
+    int player = 0;
+    // unit: npcs belong to a player and are drawn in that player's color; player is the owner index, 0 = P1
+
 public:
     int id;
 
-    npc(int id, Vector2D<float> pos);
+    npc(int id, Vector2D<float> pos, int player = 0);
     ~npc();
 
     void update(float deltaTime);
@@ -74,6 +77,7 @@ public:
     bool isFacingLeft() const;
     bool isMoving() const;
     bool isSelected() const;
+    int getPlayer() const;
 };
 // unit: main.cpp could not create or draw an npc while the class lived inside npc.cpp; declaration is now a header, pos is the center bottom (feet) of the sprite in map px, speed is px per ms, and getters expose state without SDL
 

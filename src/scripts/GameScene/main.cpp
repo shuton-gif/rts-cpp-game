@@ -43,10 +43,28 @@ const float spriteScale = 4.0f;
 const float footprintGap = 24.0f;
 const float footprintLife = 1000.0f;
 
+const int playerCount = 8;
+const SDL_Color bodyColor = {0x9b, 0xad, 0xb7, 255};
+const SDL_Color playerColors[playerCount] = {
+    {0xd0, 0x68, 0x68, 255},
+    {0x68, 0x84, 0xd0, 255},
+    {0xd0, 0xc0, 0x68, 255},
+    {0xa0, 0x68, 0xd0, 255},
+    {0xd0, 0x90, 0x68, 255},
+    {0x68, 0xc0, 0xd0, 255},
+    {0xd0, 0x68, 0xb0, 255},
+    {0xe8, 0xe8, 0xe8, 255},
+};
+// unit: npcs show their owner; bodyColor is the gray body in the npc pngs, and playerColors[p] replaces it for player p (P1 red, P2 blue, then yellow, purple, orange, teal, pink, white), muted then made a bit brighter, up to 4v4
+
+struct NpcSprites {
+    SDL_Texture* up = nullptr;
+    SDL_Texture* left = nullptr;
+    SDL_Texture* right = nullptr;
+};
+
 struct Sprites {
-    SDL_Texture* npcUp = nullptr;
-    SDL_Texture* npcLeft = nullptr;
-    SDL_Texture* npcRight = nullptr;
+    NpcSprites players[playerCount];
     SDL_Texture* footprint = nullptr;
     SDL_Texture* cross = nullptr;
     SDL_Texture* selectedArrow = nullptr;
@@ -69,12 +87,11 @@ const int tileRatioY = 10;
 const float holdGap = 5.0f;
 const float holdHeight = 8.0f;
 // unit_item: a held item was too close and overlapped the npc, then 15 and 10 were too far so the gap is 5; its center bottom sits holdHeight map px above the npc's feet, and holdGap map px of space stays between the npc's side and the item's side
-const float chopReach = 15.0f;
 const int plankCount = 3;
 const float plankScatter = 40.0f;
 const Vector2D<float> hpBarSize = {60.0f, 6.0f};
 const float hpBarGap = 8.0f;
-// economy: chopping needs the npc within chopReach map px of the tree, a felled tree drops plankCount planks within plankScatter map px, and the white hp bar is hpBarSize map px, hpBarGap below the tree's feet
+// economy: a felled tree drops plankCount planks within plankScatter map px, and the white hp bar is hpBarSize map px, hpBarGap below the tree's feet
 const Vector2D<float> tempObjectSize = {300.0f, 300.0f};
 // core: a temporary object to try clicking and gathering around, made 6 times bigger; arriveTries caps redraws of a spot that overlaps the object, tempObjectSize is its sprite area in map px (300 x 300), which also sets its collider (radius 150) and the arrive spread (rad 300)
 
@@ -187,6 +204,45 @@ static SDL_Texture* loadSprite(SDL_Renderer* renderer, const char* name)
 }
 // assets: sprites must load from any working directory and stay sharp when scaled; path is the executable folder + assets/, PNG is read by SDL3 itself and the texture uses nearest-neighbour scaling
 
+static SDL_Texture* loadRecolored(SDL_Renderer* renderer, const char* name, const SDL_Color from, const SDL_Color to)
+{
+    const char* base = SDL_GetBasePath();
+    const std::string path = std::string(base ? base : "") + "assets/" + name;
+
+    SDL_Surface* loaded = SDL_LoadPNG(path.c_str());
+    if (!loaded) return nullptr;
+    SDL_Surface* surface = SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(loaded);
+    if (!surface) return nullptr;
+
+    if (!SDL_LockSurface(surface)) {
+        SDL_DestroySurface(surface);
+        return nullptr;
+    }
+    for (int y = 0; y < surface->h; ++y) {
+        Uint8* row = static_cast<Uint8*>(surface->pixels) + y * surface->pitch;
+        for (int x = 0; x < surface->w; ++x) {
+            Uint8* px = row + x * 4;
+            if (px[0] != from.r || px[1] != from.g || px[2] != from.b || px[3] != from.a) continue;
+            px[0] = to.r;
+            px[1] = to.g;
+            px[2] = to.b;
+        }
+    }
+    SDL_UnlockSurface(surface);
+
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_DestroySurface(surface);
+    if (!texture) return nullptr;
+
+    if (!SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST)) {
+        SDL_DestroyTexture(texture);
+        return nullptr;
+    }
+    return texture;
+}
+// unit: one npc png serves every player; the png is converted to RGBA32 (bytes r, g, b, a), every opaque pixel exactly matching from (the gray body) becomes to (the player color), other pixels such as the eyes stay, and the texture is made sharp like loadSprite
+
 static double facingAngle(const Facing facing)
 {
     switch (facing) {
@@ -240,23 +296,24 @@ static bool drawSprite(SDL_Renderer* renderer, SDL_Texture* texture, const Vecto
 
 static SDL_Texture* spriteFor(const Sprites& sprites, const npc& unit)
 {
+    const NpcSprites& set = sprites.players[std::clamp(unit.getPlayer(), 0, playerCount - 1)];
     switch (unit.getFacing()) {
     case Facing::Up:
     case Facing::UpLeft:
     case Facing::UpRight:
-        return sprites.npcUp;
+        return set.up;
     case Facing::Left:
     case Facing::DownLeft:
-        return sprites.npcLeft;
+        return set.left;
     case Facing::Right:
     case Facing::DownRight:
-        return sprites.npcRight;
+        return set.right;
     case Facing::Down:
         break;
     }
-    return unit.isFacingLeft() ? sprites.npcLeft : sprites.npcRight;
+    return unit.isFacingLeft() ? set.left : set.right;
 }
-// unit: 3 sprites cover 8 facings; every up direction uses npc-u, left and down-left use npc-l, right and down-right use npc-r, straight down keeps the side last faced
+// unit: 3 sprites cover 8 facings; every up direction uses npc-u, left and down-left use npc-l, right and down-right use npc-r, straight down keeps the side last faced, all from the set in the npc's player color
 
 static SDL_FRect npcRect(const npc& unit)
 {
@@ -482,13 +539,18 @@ int main(int, char**)
     // camera: starts at the middle of the map; view is centered by offsetting half of (map - visible map area)
 
     Sprites sprites;
-    sprites.npcUp = loadSprite(renderer, "npc-u.png");
-    sprites.npcLeft = loadSprite(renderer, "npc-l.png");
-    sprites.npcRight = loadSprite(renderer, "npc-r.png");
+    for (int p = 0; p < playerCount; ++p) {
+        NpcSprites& set = sprites.players[p];
+        set.up = loadRecolored(renderer, "npc-u.png", bodyColor, playerColors[p]);
+        set.left = loadRecolored(renderer, "npc-l.png", bodyColor, playerColors[p]);
+        set.right = loadRecolored(renderer, "npc-r.png", bodyColor, playerColors[p]);
+        if (!set.up || !set.left || !set.right) return fail("loadRecolored npc");
+    }
+    // unit: every player gets its own npc sprites; the 3 facing pngs are loaded once per palette color with the gray body swapped for it
     sprites.footprint = loadSprite(renderer, "foot-print.png");
     sprites.cross = loadSprite(renderer, "cross.png");
     sprites.selectedArrow = loadSprite(renderer, "selectedArrow.png");
-    if (!sprites.npcUp || !sprites.npcLeft || !sprites.npcRight || !sprites.footprint || !sprites.cross || !sprites.selectedArrow) {
+    if (!sprites.footprint || !sprites.cross || !sprites.selectedArrow) {
         return fail("loadSprite");
     }
 
@@ -502,9 +564,10 @@ int main(int, char**)
     std::vector<Collider> colliders;
 
     std::vector<npc> npcs;
-    npcs.emplace_back(0, Vector2D<float>{bgSize.x / 2.0f, bgSize.y / 2.0f});
-    npcs.emplace_back(1, Vector2D<float>{bgSize.x / 2.0f - 60.0f, bgSize.y / 2.0f + 20.0f});
-    npcs.emplace_back(2, Vector2D<float>{bgSize.x / 2.0f + 60.0f, bgSize.y / 2.0f + 20.0f});
+    npcs.emplace_back(0, Vector2D<float>{bgSize.x / 2.0f, bgSize.y / 2.0f}, 0);
+    npcs.emplace_back(1, Vector2D<float>{bgSize.x / 2.0f - 60.0f, bgSize.y / 2.0f + 20.0f}, 0);
+    npcs.emplace_back(2, Vector2D<float>{bgSize.x / 2.0f + 60.0f, bgSize.y / 2.0f + 20.0f}, 0);
+    // unit: all three npcs belong to P1 for now, so they are red
     // unit: two more npcs are in the scene from the start; they stand 60 map px left and right of the first one, slightly lower
 
     tree tempObject({bgSize.x / 2.0f + 250.0f, bgSize.y / 2.0f}, tempObjectSize, "tree.png");
@@ -744,14 +807,14 @@ int main(int, char**)
             if (thing.updateUse(deltaTime)) {
                 GameObject* target = nullptr;
                 if (!tempObject.isFelled()) {
-                    Collider trunk = tempObject.getCollider();
-                    Collider swing = {holder.getPos(), colliderRadius + chopReach, false};
-                    if (separate(trunk, swing)) target = &tempObject;
+                    Collider hitbox = tempObject.getChopHitbox();
+                    Collider swing = holder.getCollider();
+                    if (separate(hitbox, swing)) target = &tempObject;
                 }
                 thing.use(holder, target);
             }
             // animation: the swing plays over the item's useDuration and use runs once on the frame it ends
-            // economy: a swing hits the tree when the holder's feet oval, grown by chopReach, touches the tree's solid oval; otherwise the target is nullptr and the swing misses
+            // economy: a swing hits the tree when the holder's feet oval touches the tree's chop hitbox, which is chopScale times its solid oval, so an npc pushed against the trunk always hits; otherwise the target is nullptr and the swing misses
             const float side = holder.isFacingLeft() ? -1.0f : 1.0f;
             const float reach = holder.getSize().x * spriteScale / 2.0f + holdGap + thing.getSize().x / 2.0f;
             thing.moveTo({holder.getPos().x + side * reach, holder.getPos().y - holdHeight + thing.getUseOffset()});
@@ -865,9 +928,11 @@ int main(int, char**)
         if (!SDL_RenderPresent(renderer)) return fail("SDL_RenderPresent");
     }
 
-    SDL_DestroyTexture(sprites.npcUp);
-    SDL_DestroyTexture(sprites.npcLeft);
-    SDL_DestroyTexture(sprites.npcRight);
+    for (const NpcSprites& set : sprites.players) {
+        SDL_DestroyTexture(set.up);
+        SDL_DestroyTexture(set.left);
+        SDL_DestroyTexture(set.right);
+    }
     SDL_DestroyTexture(sprites.footprint);
     SDL_DestroyTexture(sprites.cross);
     SDL_DestroyTexture(sprites.selectedArrow);

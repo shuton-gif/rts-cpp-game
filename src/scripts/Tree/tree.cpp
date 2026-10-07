@@ -19,6 +19,14 @@ bool tree::chop(int damage)
 }
 // economy: each chop takes damage off hp, never below 0; it is true only on the chop that brings hp to 0, and a felled tree ignores more chops
 
+Collider tree::getChopHitbox() const
+{
+    Collider hitbox = this->getCollider();
+    hitbox.radius *= chopScale;
+    return hitbox;
+}
+// economy: an axe needs a bigger target than the solid oval; the hitbox is centered on the tree like its collider with radius x chopScale (half height still radius / 2)
+
 int tree::getHp() const { return this->hp; }
 int tree::getMaxHp() const { return this->maxHp; }
 bool tree::isFelled() const { return this->hp <= 0; }
