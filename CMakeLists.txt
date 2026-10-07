@@ -30,9 +30,10 @@ add_executable(rts
     src/scripts/Item/item.cpp
     src/scripts/NPC/npc.cpp
     src/scripts/Tree/tree.cpp
+    src/scripts/Wall/wall.cpp
 )
 target_include_directories(rts PRIVATE src/scripts)
-# build: arrow.cpp and bow.cpp are new; every source under src/scripts is listed in `rts` and src/scripts is the include root
+# build: wall.cpp is new; every source under src/scripts is listed in `rts` and src/scripts is the include root
 target_link_libraries(rts PRIVATE SDL3::SDL3)
 
 add_custom_command(TARGET rts POST_BUILD

@@ -24,5 +24,8 @@ void arrow::update(float deltaTime)
 Vector2D<float> arrow::getPos() const { return this->pos; }
 float arrow::getFeet() const { return this->pos.y + this->height; }
 double arrow::getAngle() const { return std::atan2(this->dir.y, this->dir.x) * 180.0 / 3.14159265358979; }
-bool arrow::isGone() const { return this->age >= arrowLife; }
+bool arrow::isGone() const { return this->spent || this->age >= arrowLife; }
+bool arrow::isFlying() const { return !this->spent && this->traveled < arrowRange; }
+void arrow::spend() { this->spent = true; }
 // combat: main.cpp draws arrows sorted with everything else and removes them once gone; the angle is degrees clockwise from right because map y points down
+// combat: an arrow that hit is gone at once instead of after arrowLife, and a spent or landed arrow no longer flies
