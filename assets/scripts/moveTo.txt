@@ -1,0 +1,3 @@
+# ai_script: right click on the ground; walk to the clicked spot
+moveTo(target)
+stop()

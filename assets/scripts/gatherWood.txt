@@ -1,0 +1,12 @@
+# ai_script: right click on a tree; get an axe and fell trees in sight until none is left
+if holding(axe)
+  if not find(tree)
+    stop()
+  moveTo(tree)
+  target(tree)
+  use(axe)
+else
+  if not find(axe)
+    stop()
+  moveTo(axe)
+  pickup(axe)

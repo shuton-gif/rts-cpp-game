@@ -1,0 +1,6 @@
+# ai_script: right click on a ground item; walk onto it and pick it up
+if not find(target)
+  stop()
+moveTo(target)
+pickup(target)
+stop()

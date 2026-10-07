@@ -1,0 +1,25 @@
+# ai_script: right click on a wall plan; haul planks to the plan 
+# and build it, and chop a tree with an axe when no plank is left
+if not find(plan)
+  stop()
+if full(plan)
+  moveTo(plan)
+  build(plan)
+else
+  if holding(plank)
+    moveTo(plan)
+    use(plank)
+  else
+    if find(plank)
+      moveTo(plank)
+      pickup(plank)
+    else
+      if holding(axe)
+        if find(tree)
+          moveTo(tree)
+          target(tree)
+          use(axe)
+      else
+        if find(axe)
+          moveTo(axe)
+          pickup(axe)

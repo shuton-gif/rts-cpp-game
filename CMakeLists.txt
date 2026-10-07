@@ -20,21 +20,27 @@ FetchContent_MakeAvailable(SDL3)
 # build: SDL3 must build the same on every machine and sprites load with SDL_LoadPNG (new in 3.4); an installed SDL3 3.4+ is used when found, else the pinned tag is fetched and built from source
 
 add_executable(rts
+    src/scripts/AI/agent.cpp
+    src/scripts/AI/script.cpp
     src/scripts/Arrow/arrow.cpp
     src/scripts/Collision/collision.cpp
+    src/scripts/Editor/editor.cpp
     src/scripts/GameObject/gameObject.cpp
     src/scripts/GameScene/main.cpp
     src/scripts/Grass/grass.cpp
     src/scripts/Item/axe.cpp
     src/scripts/Item/bow.cpp
     src/scripts/Item/item.cpp
+    src/scripts/Movement/arrive.cpp
     src/scripts/NPC/npc.cpp
     src/scripts/Tree/tree.cpp
     src/scripts/Wall/wall.cpp
 )
 target_include_directories(rts PRIVATE src/scripts)
-# build: wall.cpp is new; every source under src/scripts is listed in `rts` and src/scripts is the include root
+# build: Editor/editor.cpp is new; every source under src/scripts is listed in `rts` and src/scripts is the include root
 target_link_libraries(rts PRIVATE SDL3::SDL3)
+target_compile_definitions(rts PRIVATE RTS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# ui_editor: the in-game script editor saves into the repo so edits survive the asset copy of the next build; RTS_SOURCE_DIR is the repo root as a string literal
 
 add_custom_command(TARGET rts POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E rm -rf $<TARGET_FILE_DIR:rts>/assets

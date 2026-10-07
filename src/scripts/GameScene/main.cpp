@@ -2,19 +2,26 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <random>
 #include <string>
 #include <vector>
 
+#include "AI/agent.h"
+#include "AI/script.h"
 #include "Arrow/arrow.h"
 #include "Collision/collision.h"
+#include "Editor/editor.h"
+// ui_editor: npc scripts are edited in game; main.cpp owns one scriptEditor pop-up
 #include "GameObject/gameObject.h"
 #include "Grass/grass.h"
 #include "Item/axe.h"
 #include "Item/bow.h"
 #include "Item/item.h"
+#include "Movement/arrive.h"
 #include "NPC/npc.h"
+// ai_script: npc behaviors moved out of main into text scripts; agent runs them, script loads them, and arrive holds the shared arrive helpers
 #include "Tree/tree.h"
 #include "Vector2D.h"
 // core: Vector2D is shared with npc.cpp; definition moved to src/scripts/Vector2D.h and included here
@@ -83,8 +90,7 @@ const float grassSize = 0.75f;
 const int clumpCount = 60;
 const int clumpTries = 30;
 const float clumpMargin = 24.0f;
-const float groundArriveRad = 50.0f;
-const int arriveTries = 30;
+// ai_script: groundArriveRad and arriveTries were main's own; they moved to Movement/arrive.h with the arrive helpers that use them
 const int renderMargin = 100;
 const int tileRatioX = 10;
 const int tileRatioY = 10;
@@ -114,9 +120,8 @@ const Vector2D<float> treeSpots[] = {
 };
 // economy: one tree gave planks for only one wall; treeSpots are the feet of every tree as offsets from the map center, apart enough that their solid ovals and sprites do not cover each other, the npcs or the items
 const int snapReach = 2;
-const float wallReach = 120.0f;
 const Uint8 planAlpha = 100;
-// economy: walls are single posts, one tile each, and a new line joins the walls already there; a drag that starts or ends within snapReach tiles of a post or plan starts or ends on it; an npc hauls or builds once it stands still within wallReach map px of the wall's feet, raised from 48 because npcs stand up to 60 map px away around a post; a plan and the placement ghost are drawn at planAlpha and a plan fills in to full while it is built
+// economy: walls are single posts, one tile each, and a new line joins the walls already there; a drag that starts or ends within snapReach tiles of a post or plan starts or ends on it; how close an npc must stand to haul or build is now buildReach in AI/agent.h; a plan and the placement ghost are drawn at planAlpha and a plan fills in to full while it is built
 
 struct Footprint {
     Vector2D<float> pos;
@@ -455,19 +460,7 @@ static bool addGrassClump(std::vector<Drawable>& drawables, const std::vector<SD
 }
 // map: a clump is data only and needs drawing, with strips smaller than other sprites; a strip's offset is its center bottom (where the blade meets the ground), scaled from sprite px to map px, so strips of any height share a ground line
 
-static Vector2D<float> fuzzyArrive(std::mt19937& rng, const Vector2D<float> target, const float rad = groundArriveRad)
-{
-    std::uniform_real_distribution<float> turn(0.0f, 2.0f * 3.14159265f);
-    std::uniform_real_distribution<float> reach(0.0f, 1.0f);
-
-    const float angle = turn(rng);
-    const float radius = std::sqrt(reach(rng));
-    return {
-        std::clamp(std::floor(target.x + std::cos(angle) * radius * rad), 0.0f, bgSize.x),
-        std::clamp(std::floor(target.y + std::sin(angle) * radius * rad / 2.0f), 0.0f, bgSize.y),
-    };
-}
-// movement: the spread around a target depends on what was clicked; rad is the oval's horizontal radius in map px (vertical rad / 2, the 1 : 2 oval), and a random point inside it is returned, evenly spread over the oval and kept inside the map
+// ai_script: fuzzyArrive moved to Movement/arrive.h so agents share it; it now takes the map size to clamp to
 
 static SDL_FRect objectRect(const GameObject& object)
 {
@@ -477,23 +470,7 @@ static SDL_FRect objectRect(const GameObject& object)
 }
 // core: a game object is clicked and gets its arrow by its sprite area; size is already map px, so the rect runs from the feet up by the height, centered on x
 
-static Vector2D<float> arriveAround(std::mt19937& rng, const GameObject& object)
-{
-    const Collider body = object.getCollider();
-    const Vector2D<float> pos = body.pos;
-    const float rad = std::max(body.radius * 2.0f, body.radius) + colliderRadius;
-    // movement: npcs were spread up to max(w, h) of the sprite, far from a small trunk; the spread is now centered on the solid oval with rad = max(w, h) of the oval (its width, 2 x radius) plus one npc radius, so there is always a ring outside the oval where an npc fits
-
-    Vector2D<float> spot = fuzzyArrive(rng, pos, rad);
-    for (int attempt = 0; attempt < arriveTries; ++attempt) {
-        Collider solid = object.getCollider();
-        Collider unit = {spot, colliderRadius, false};
-        if (!separate(solid, unit)) break;
-        spot = fuzzyArrive(rng, pos, rad);
-    }
-    return spot;
-}
-// movement: npcs sent to an object spread around its solid oval; a spot where an npc would overlap the object's solid oval could never be reached, so it is drawn again (up to arriveTries times) until the npc fits beside the object
+// ai_script: arriveAround moved to Movement/arrive.h so agents share it; it now takes the map size to clamp to
 
 static bool handsFree(const std::vector<std::unique_ptr<item>>& items, const int id)
 {
@@ -501,13 +478,7 @@ static bool handsFree(const std::vector<std::unique_ptr<item>>& items, const int
         return thing->getHolder() == id || thing->getFetcher() == id;
     });
 }
-
-static bool hasMark(const npc& unit, const Vector2D<float> mark)
-{
-    const std::vector<Vector2D<float>>& queued = unit.getQueuedMark();
-    return unit.getTargetedMark() == mark || std::find(queued.begin(), queued.end(), mark) != queued.end();
-}
-// unit_item: an npc carries one item at a time and keeps fetching only while the item is still among its destinations; hands are free when no item is held or fetched by that npc id, and hasMark checks the current and queued marks
+// ai_script: an npc carries one item at a time; hands are free when no item is held by that npc id or reserved by its agent (fetcher), and hasMark moved to Movement/arrive.h
 
 struct WallLook {
     SDL_Texture* posts[2] = {nullptr, nullptr};
@@ -629,20 +600,7 @@ static bool canPlace(const wall& candidate, const std::vector<wall>& walls, cons
 }
 // economy: a post cannot be planned on a tile another post or plan stands on, inside a standing tree's solid oval or off the map; the footprint is shrunk by 1 px so posts side by side only touch, and the tree test runs on copies
 
-static int nearestPlan(const std::vector<wall>& walls, const Vector2D<float> from)
-{
-    int nearest = -1;
-    float best = 0.0f;
-    for (size_t i = 0; i < walls.size(); ++i) {
-        if (walls[i].isBuilt() || walls[i].isDestroyed()) continue;
-        const float distance = std::hypot(walls[i].getPos().x - from.x, walls[i].getPos().y - from.y);
-        if (nearest >= 0 && distance >= best) continue;
-        nearest = static_cast<int>(i);
-        best = distance;
-    }
-    return nearest;
-}
-// economy: a builder goes on to the next plan when its wall is done; the closest wall not yet built is returned, -1 when none is left
+// ai_script: nearestPlan was only used by the wall job loop; the buildWall script finds the next plan with find(plan) instead
 
 static SDL_FRect clumpRect(const GrassClump& clump)
 {
@@ -822,12 +780,11 @@ int main(int, char**)
     }
     // economy: walls are the two post sprites, scaled so a post is one tile wide (10 x 50 and 10 x 60 map px), owned by itemTextures
     std::vector<wall> walls;
-    std::vector<int> jobs(npcs.size(), -1);
     bool placing = false;
     bool showSolid = false;
     bool showChop = false;
     // test: dev views, U shows every solid oval and I every chop hitbox
-    // economy: walls are planned by the player and built by npcs; a segment is a horizontal wall or a vertical column of posts (see WallLook), walls keeps plans and built posts by index, jobs[id] is the wall npc id works on (-1 none), and placing is on between B and placing a row
+    // economy: walls are planned by the player and built by npcs; a segment is a horizontal wall or a vertical column of posts (see WallLook), walls keeps plans and built posts by index, npcs work on one through their agent's buildWall script, and placing is on between B and placing a row
 
     SDL_Texture* arrowSprite = loadSprite(renderer, "arrow.png");
     if (!arrowSprite) return fail("loadSprite arrow");
@@ -843,6 +800,19 @@ int main(int, char**)
     Vector2D<float> dragStart = {0.0f, 0.0f};
     // unit: the first npc starts at the middle of the map, which is the middle of the screen because the camera starts centered; npcs sit in a vector so more can be added
 
+    std::map<std::string, Script> scripts;
+    const char* scriptBase = SDL_GetBasePath();
+    const std::string scriptDir = std::string(scriptBase ? scriptBase : "") + "assets/scripts";
+    for (const std::string& error : loadScripts(scriptDir, scripts)) SDL_Log("script: %s", error.c_str());
+    scriptEditor editor;
+    const std::string scriptSource = std::string(RTS_SOURCE_DIR) + "/assets/scripts";
+    // ui_editor: npc scripts are edited in game; the editor saves to the repo's assets/scripts (scriptSource) and the build copy (scriptDir) that the game loads
+    std::vector<agent> agents;
+    for (const npc& unit : npcs) agents.emplace_back(unit.id);
+    std::vector<item*> consumed;
+    World world{npcs, items, trees, walls, rng, bgSize, 0.0f, consumed};
+    // ai_script: npc behaviors are text scripts so they change without recompiling; every .txt in assets/scripts next to the executable is parsed by name once here (errors logged), agents[id] runs npc id's behavior, and world hands the agents main's lists, the frame time and consumed, where delivered planks wait to be erased
+
     IntervalTimer timer;
     bool mouseSeen = false;
     bool running = true;
@@ -850,6 +820,11 @@ int main(int, char**)
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+            if (editor.isOpen() && editor.handleEvent(event, density)) {
+                if (event.type == SDL_EVENT_MOUSE_MOTION) mouse = toPixels(event.motion.x, event.motion.y);
+                continue;
+            }
+            // ui_editor: npc scripts are edited in game; while open the editor takes every key, text input and mouse event inside its panel and the game skips them, quit and window events always reach the game, and a consumed motion still moves the cursor used by edge scroll
             switch (event.type) {
             case SDL_EVENT_QUIT:
                 running = false;
@@ -866,6 +841,16 @@ int main(int, char**)
                 if (event.key.key == SDLK_U) showSolid = !showSolid;
                 if (event.key.key == SDLK_I) showChop = !showChop;
                 // test: U and I toggle the dev hitbox views
+                if (event.key.key == SDLK_F5) {
+                    for (const std::string& error : loadScripts(scriptDir, scripts)) SDL_Log("script: %s", error.c_str());
+                }
+                // ai_script: scripts are edited while the game runs; F5 parses assets/scripts again into the same map, a broken file keeps its old version and its error is logged
+                if (event.key.key == SDLK_F1 && !editor.isOpen()) {
+                    std::vector<std::string> names;
+                    for (const auto& [name, script] : scripts) names.push_back(name);
+                    editor.open(window, names, scriptSource, scriptDir);
+                }
+                // ui_editor: npc scripts are edited in game; F1 opens the editor with one tab per loaded script, and F1 or Esc inside it closes it before the game sees the key
                 if (event.key.key == SDLK_B) {
                     placing = !placing;
                     dragging = false;
@@ -938,42 +923,54 @@ int main(int, char**)
                         planned = static_cast<int>(i);
                         break;
                     }
-                    // economy: right click on a wall plan puts every selected npc to work on it; any other right click order takes them off their wall
+                    // ai_script: right click on a wall plan gives every selected npc the buildWall script on it; any other right click order replaces it
                     int aimed = -1;
                     for (size_t i = 0; picked < 0 && planned < 0 && i < trees.size(); ++i) {
                         if (trees[i].isFelled() || !overlaps(point, objectRect(trees[i]))) continue;
                         aimed = static_cast<int>(i);
                         break;
                     }
-                    const bool onObject = aimed >= 0;
                     // economy: a felled tree is gone, so a right click where it stood is a ground click; with several trees the first one under the click is the target
-                    const Vector2D<float> mark = onObject ? trees[aimed].getPos() : clicked;
                     for (npc& unit : npcs) {
                         if (!unit.isSelected()) continue;
-                        jobs[unit.id] = planned;
-                        if (planned >= 0) continue;
-                        if (unit.id == fetcherId) {
-                            const Vector2D<float> spot = items[picked]->getPos();
-                            if (shift) {
-                                unit.addDestination(spot, spot);
-                            } else {
-                                unit.setDestinaion(spot, spot);
-                            }
+                        agent& brain = agents[unit.id];
+                        if (planned >= 0) {
+                            Slot site;
+                            site.kind = Slot::Kind::Wall;
+                            site.index = planned;
+                            brain.start("buildWall", {{"target", site}, {"plan", site}}, world);
                             continue;
                         }
-                        // unit_item: the fetcher walks exactly onto the item and its mark is the item's pos, so the arrow shows over the item instead of a cross; shift queues it like any destination
-                        const Vector2D<float> target = onObject ? arriveAround(rng, trees[aimed])
-                            : selected > 1 ? fuzzyArrive(rng, clicked, groundArriveRad) : clicked;
-                        // movement: a right click on an object sends npcs around it instead of onto it; every selected npc, even a single one, gets an arriveAround spot with rad = max(w, h) of the object, and ground clicks are unchanged
-                        if (shift) {
-                            unit.addDestination(target, mark);
-                        } else {
-                            unit.setDestinaion(target, mark);
+                        if (unit.id == fetcherId) {
+                            Slot thing;
+                            thing.kind = Slot::Kind::Item;
+                            thing.thing = items[picked].get();
+                            const std::string& image = items[picked]->getImage();
+                            const std::string kind = image.substr(0, image.rfind(".png"));
+                            brain.start("pickup", {{"target", thing}, {kind, thing}}, world);
+                            continue;
                         }
+                        if (aimed >= 0) {
+                            Slot stand;
+                            stand.kind = Slot::Kind::Tree;
+                            stand.index = aimed;
+                            brain.start("gatherWood", {{"target", stand}, {"tree", stand}}, world);
+                            continue;
+                        }
+                        const Vector2D<float> spot = selected > 1 ? fuzzyArrive(rng, clicked, bgSize, groundArriveRad) : clicked;
+                        if (shift) {
+                            brain.stop(world);
+                            unit.addDestination(spot, clicked);
+                            continue;
+                        }
+                        Slot ground;
+                        ground.kind = Slot::Kind::Point;
+                        ground.point = spot;
+                        ground.mark = clicked;
+                        brain.start("moveTo", {{"target", ground}}, world);
                     }
-                    // ui: an object target shows the arrow on the object instead of a cross; its mark is the object's pos, which the draw step recognises, while a ground click keeps the clicked point as mark
-                    // movement: several npcs sent to one point arrived on the same px; when more than one is selected each gets its own fuzzyArrive point around the click, with groundArriveRad for open ground (a clicked building will pass max(h, w) of the building instead), and a single npc still goes exactly to the click
-                    // input: shift right click adds another cross to walk to after the current ones; with shift held the point is added to each selected npc's destinations, without it the point replaces them
+                    // ai_script: a right click order is a script run by the npc's agent; a plan starts buildWall, the fetcher starts pickup with the item under "target" and its kind (image without .png), a tree starts gatherWood, and a ground click starts moveTo to a fuzzyArrive spot when several are selected (the clicked point when one), while shift stops the agent and queues the spot as a plain destination
+                    // ui: an object target shows the arrow on the object instead of a cross; the agent's moveTo uses the object's pos as mark, which the draw step recognises, while a ground click keeps the clicked point as mark
                 }
                 break;
             case SDL_EVENT_MOUSE_BUTTON_UP:
@@ -1018,8 +1015,14 @@ int main(int, char**)
             }
         }
         // input: full screen has no close button and the cursor is 0,0 until it moves; Esc quits and edge scroll waits for the first mouse motion
+        if (editor.takeSaved()) {
+            for (const std::string& error : loadScripts(scriptDir, scripts)) SDL_Log("script: %s", error.c_str());
+        }
+        // ui_editor: npc scripts are edited in game; a save in the editor reloads assets/scripts like F5 once, a broken file keeps its old version
 
         const float deltaTime = timer.tick();
+        world.deltaTime = deltaTime;
+        // ai_script: skills that take time (build, use) need this frame's length; world carries it to the agents
         if (mouseSeen) moveCamera(viewport, deltaTime);
 
         for (Footprint& print : footprints) print.age += deltaTime;
@@ -1058,19 +1061,7 @@ int main(int, char**)
 
         for (const std::unique_ptr<item>& owned : items) {
             item& thing = *owned;
-            const int fetcher = thing.getFetcher();
-            if (fetcher >= 0) {
-                const npc& unit = npcs[fetcher];
-                const Vector2D<float> pos = unit.getPos();
-                const Vector2D<float> spot = thing.getPos();
-                if (!unit.isMoving() && std::hypot(pos.x - spot.x, pos.y - spot.y) <= arriveSlack) {
-                    thing.pickUp(fetcher);
-                } else if (!hasMark(unit, spot)) {
-                    thing.setFetcher(-1);
-                }
-            }
-            // unit_item: the fetcher picks the item up once it stands still within arriveSlack of it (a push near it still counts), and stops fetching when a new order removed the item from its destinations; npc id is its index in npcs
-
+            // ai_script: picking up a fetched item moved from here to the agent's pickup skill
             if (!thing.isHeld()) continue;
             npc& holder = npcs[thing.getHolder()];
             if (thing.updateUse(deltaTime) && thing.swings()) {
@@ -1107,74 +1098,16 @@ int main(int, char**)
         }
         // unit_item: a held item stays at its holder's side after the npcs moved; its center is half the npc width + holdGap + half the item width from the npc's center, on the right, or on the left when the npc faces left, and up or down keep the last side because isFacingLeft only changes on a left or right step
 
-        for (npc& unit : npcs) {
-            int& job = jobs[unit.id];
-            if (job >= 0 && (walls[job].isBuilt() || walls[job].isDestroyed())) job = nearestPlan(walls, unit.getPos());
-        }
-        std::vector<int> incoming(walls.size(), 0);
-        for (const std::unique_ptr<item>& thing : items) {
-            if (thing->getImage() != "plank.png") continue;
-            const int carrier = thing->isHeld() ? thing->getHolder() : thing->getFetcher();
-            if (carrier >= 0 && jobs[carrier] >= 0) ++incoming[jobs[carrier]];
-        }
-        std::vector<bool> consumed(items.size(), false);
-        for (npc& unit : npcs) {
-            const int job = jobs[unit.id];
-            if (job < 0) continue;
-            wall& site = walls[job];
-            const Vector2D<float> pos = unit.getPos();
-            const Vector2D<float> at = site.getPos();
-            const bool there = !unit.isMoving() && std::hypot(pos.x - at.x, pos.y - at.y) <= wallReach;
-            const bool heading = unit.isMoving() && hasMark(unit, at);
-
-            int held = -1;
-            bool fetching = false;
-            for (size_t i = 0; i < items.size(); ++i) {
-                if (items[i]->getHolder() == unit.id) held = static_cast<int>(i);
-                if (items[i]->getFetcher() == unit.id) fetching = true;
-            }
-
-            if (!site.hasAllPlanks()) {
-                if (held >= 0 && items[held]->getImage() != "plank.png") {
-                    items[held]->drop({items[held]->getPos().x, pos.y});
-                    held = -1;
-                }
-                if (held >= 0) {
-                    if (there && site.deliver()) {
-                        consumed[held] = true;
-                        --incoming[job];
-                    } else if (!there && !heading) {
-                        unit.setDestinaion(arriveAround(rng, site), at);
-                    }
-                } else if (!fetching && site.getDelivered() + incoming[job] < wallCost) {
-                    int nearest = -1;
-                    float best = 0.0f;
-                    for (size_t i = 0; i < items.size(); ++i) {
-                        const item& plank = *items[i];
-                        if (plank.getImage() != "plank.png" || plank.isHeld() || plank.getFetcher() >= 0) continue;
-                        const float distance = std::hypot(plank.getPos().x - pos.x, plank.getPos().y - pos.y);
-                        if (nearest >= 0 && distance >= best) continue;
-                        nearest = static_cast<int>(i);
-                        best = distance;
-                    }
-                    if (nearest >= 0) {
-                        items[nearest]->setFetcher(unit.id);
-                        unit.setDestinaion(items[nearest]->getPos(), items[nearest]->getPos());
-                        ++incoming[job];
-                    }
-                }
-            } else if (there) {
-                site.build(deltaTime);
-            } else if (!heading) {
-                unit.setDestinaion(arriveAround(rng, site), at);
-            }
-        }
+        consumed.clear();
+        for (agent& brain : agents) brain.run(world, scripts);
         for (size_t i = items.size(); i-- > 0;) {
-            if (!consumed[i]) continue;
+            item* const thing = items[i].get();
+            if (std::find(consumed.begin(), consumed.end(), thing) == consumed.end()) continue;
+            for (agent& brain : agents) brain.forget(thing);
             items.erase(items.begin() + static_cast<std::ptrdiff_t>(i));
             itemSprites.erase(itemSprites.begin() + static_cast<std::ptrdiff_t>(i));
         }
-        // economy: npcs with a wall job haul and build without more orders; a finished wall hands its builders the nearest plan left, then while a wall still needs planks an npc drops any tool, fetches the nearest free ground plank (only if planks already carried there are not enough) and drops it in beside the wall, where it is used up, and once all wallCost planks are in every npc beside it adds its frame time to the build; an npc that is not beside the wall and not walking there is sent around it
+        // ai_script: npcs haul, build, chop and fetch by their scripts instead of a hard-coded wall job; every agent plays one frame of its script, then each plank its use skill put in consumed is forgotten by every agent and erased with its sprite, from the back so indexes stay valid
 
         for (arrow& shot : arrows) {
             shot.update(deltaTime);
@@ -1199,7 +1132,7 @@ int main(int, char**)
         for (size_t t = 0; t < trees.size(); ++t) {
             if (!trees[t].isFelled() || planksDropped[t]) continue;
             for (int i = 0; i < plankCount; ++i) {
-                items.push_back(std::make_unique<item>(fuzzyArrive(rng, trees[t].getPos(), plankScatter), Vector2D<float>{plankW * spriteScale * plankScale, plankH * spriteScale * plankScale}, "plank.png"));
+                items.push_back(std::make_unique<item>(fuzzyArrive(rng, trees[t].getPos(), bgSize, plankScatter), Vector2D<float>{plankW * spriteScale * plankScale, plankH * spriteScale * plankScale}, "plank.png"));
                 itemSprites.push_back(plankSprite);
             }
             planksDropped[t] = true;
@@ -1377,6 +1310,9 @@ int main(int, char**)
         // economy: a drag while placing draws ghost walls instead of the selection box
         // render: draw order decides what covers what; background, then ground marks (footprints fading with age, cross at each moving npc's destination), then grass and npcs sorted by feet y, then selection arrows, drag box on top
 
+        if (!SDL_SetRenderScale(renderer, 1.0f, 1.0f)) return fail("SDL_SetRenderScale");
+        if (!editor.draw(renderer, viewport, density)) return fail("editor draw");
+        // ui_editor: npc scripts are edited in game; the editor is drawn last over everything at scale 1 in real pixels, and the next frame sets zoom again before drawing the map
         if (!SDL_RenderPresent(renderer)) return fail("SDL_RenderPresent");
     }
 
