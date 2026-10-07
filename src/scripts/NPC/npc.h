@@ -10,6 +10,7 @@
 const std::size_t maxDestinations = 3;
 const float colliderRadius = 10.0f;
 const float arriveSlack = 20.0f;
+const float stuckLimit = 500.0f;
 
 /**
  * npc sprite
@@ -39,6 +40,11 @@ private:
     std::vector<Vector2D<float>> queuedMark;
     // ui: npcs sent together walk to their own spread-out points but should show one cross at the clicked point; each destination keeps a mark (where the cross is drawn) next to its pos (where the npc walks)
     // movement: shift right click adds destinations to visit in order; queuedPos holds the ones after targetedPos, and with targetedPos there are at most maxDestinations
+
+    std::vector<Vector2D<float>> route;
+    bool routed = false;
+    float stuckTime = 0.0f;
+    // pathfinding: npcs got stuck on trees and walls between them and targetedPos; route holds the waypoints before targetedPos in walking order, routed is false until main hands a path for the current targetedPos, and stuckTime counts ms of barely moving, replanning at stuckLimit
 
     Facing facing = Facing::Down;
     bool facingLeft = false;
@@ -71,6 +77,12 @@ public:
     // combat: E aims every selected npc at the cursor; setAim turns the direction from the feet to point into a unit vector, and a point on the feet keeps the old aim
     void faceAim();
     // combat: a shooting npc turns to its aim; faceAim sets facing to the nearest of the 8 facings, until the next step turns it again
+    bool needsRoute() const;
+    void setRoute(std::vector<Vector2D<float>> points);
+    const std::vector<Vector2D<float>>& getRoute() const;
+    void replan();
+    bool trackProgress(Vector2D<float> before, float deltaTime);
+    // pathfinding: main computes paths around obstacles and draws them, the npc only walks them; needsRoute asks for a path when moving without one, setRoute stores it without the final targetedPos, getRoute exposes it for the white line, replan drops it, and trackProgress replans after stuckLimit ms of barely moving
 
     Collider getCollider() const;
     // movement: npcs must not walk through or stand on each other; getCollider gives the solid oval at the feet (20 x 10 map px) and pushTo takes the position collision moved it to

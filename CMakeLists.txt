@@ -32,10 +32,12 @@ add_executable(rts
     src/scripts/Item/bow.cpp
     src/scripts/Item/item.cpp
     src/scripts/Movement/arrive.cpp
+    src/scripts/Pathfinding/path.cpp
     src/scripts/NPC/npc.cpp
     src/scripts/Tree/tree.cpp
     src/scripts/Wall/wall.cpp
 )
+# pathfinding: npcs need paths around trees and walls; path.cpp holds the nav grid and A*
 target_include_directories(rts PRIVATE src/scripts)
 # build: Editor/editor.cpp is new; every source under src/scripts is listed in `rts` and src/scripts is the include root
 target_link_libraries(rts PRIVATE SDL3::SDL3)

@@ -22,6 +22,8 @@
 #include "Movement/arrive.h"
 #include "NPC/npc.h"
 // ai_script: npc behaviors moved out of main into text scripts; agent runs them, script loads them, and arrive holds the shared arrive helpers
+#include "Pathfinding/path.h"
+// pathfinding: npcs got stuck on trees and walls between them and their destination; main owns one navGrid and hands each npc a path around them
 #include "Tree/tree.h"
 #include "Vector2D.h"
 // core: Vector2D is shared with npc.cpp; definition moved to src/scripts/Vector2D.h and included here
@@ -109,6 +111,8 @@ const float hpBarGap = 8.0f;
 // economy: a felled tree drops plankCount planks within plankScatter map px, and the white hp bar is hpBarSize map px, hpBarGap below the tree's feet
 const float hpBarShow = 3000.0f;
 // combat: hp bars on every tree and post cluttered the map; a bar shows only for hpBarShow ms after the last damage
+const float pathWidth = 4.0f;
+// pathfinding: a 1 px path line was hard to see; it is pathWidth map px wide (3 px thicker)
 const int treeTilesX = 30;
 const int treeTilesY = 32;
 const Vector2D<float> treeSize = {static_cast<float>(treeTilesX * tileRatioX), static_cast<float>(treeTilesY * tileRatioY)};
@@ -416,6 +420,35 @@ static bool drawHpBar(SDL_Renderer* renderer, const Vector2D<float> feet, const 
 }
 // economy: a tree's hp must be visible; a white bar hpBarSize map px sits hpBarGap below its feet, the 1 px outline is full hp and the white fill is hp / maxHp of it, skipped outside the render area
 // economy: walls show hp and build progress with the same bar; the caller passes the feet and the filled part (0 to 1), and a narrower width so bars of walls side by side do not cover each other
+
+static bool drawPathLine(SDL_Renderer* renderer, const std::vector<SDL_FPoint>& points)
+{
+    const float half = pathWidth / 2.0f;
+    const SDL_FColor white = {1.0f, 1.0f, 1.0f, 1.0f};
+    const int quad[6] = {0, 1, 2, 0, 2, 3};
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+        const SDL_FPoint a = points[i];
+        const SDL_FPoint b = points[i + 1];
+        const float length = std::hypot(b.x - a.x, b.y - a.y);
+        if (length <= 0.0f) continue;
+        const float nx = -(b.y - a.y) / length * half;
+        const float ny = (b.x - a.x) / length * half;
+        const SDL_Vertex corners[4] = {
+            {{a.x + nx, a.y + ny}, white, {0.0f, 0.0f}},
+            {{b.x + nx, b.y + ny}, white, {0.0f, 0.0f}},
+            {{b.x - nx, b.y - ny}, white, {0.0f, 0.0f}},
+            {{a.x - nx, a.y - ny}, white, {0.0f, 0.0f}},
+        };
+        if (!SDL_RenderGeometry(renderer, nullptr, corners, 4, quad, 6)) return false;
+    }
+    if (!SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255)) return false;
+    for (const SDL_FPoint& joint : points) {
+        const SDL_FRect square = {joint.x - half, joint.y - half, pathWidth, pathWidth};
+        if (!SDL_RenderFillRect(renderer, &square)) return false;
+    }
+    return true;
+}
+// pathfinding: SDL lines are 1 px; each segment of the path (points already minus the camera) is a white quad pathWidth map px wide along its normal, and a pathWidth square on every point fills the gap where segments bend
 
 static std::vector<SDL_Texture*> loadGrassSprites(SDL_Renderer* renderer)
 {
@@ -820,6 +853,10 @@ int main(int, char**)
     std::vector<item*> consumed;
     World world{npcs, items, trees, walls, rng, bgSize, 0.0f, consumed};
     // ai_script: npc behaviors are text scripts so they change without recompiling; every .txt in assets/scripts next to the executable is parsed by name once here (errors logged), agents[id] runs npc id's behavior, and world hands the agents main's lists, the frame time and consumed, where delivered planks wait to be erased
+    navGrid nav;
+    std::vector<Collider> solids;
+    size_t solidCount = SIZE_MAX;
+    // pathfinding: the grid must follow trees being felled and walls being built; solids holds this frame's standing trees and built walls, and solidCount is how many the grid was last built from, SIZE_MAX so the first frame builds it
 
     IntervalTimer timer;
     bool mouseSeen = false;
@@ -1036,6 +1073,26 @@ int main(int, char**)
         for (Footprint& print : footprints) print.age += deltaTime;
         std::erase_if(footprints, [](const Footprint& print) { return print.age >= footprintLife; });
 
+        solids.clear();
+        for (const tree& stand : trees) {
+            if (!stand.isFelled()) solids.push_back(stand.getCollider());
+        }
+        for (const wall& segment : walls) {
+            if (segment.isBuilt()) solids.push_back(segment.getCollider());
+        }
+        if (solids.size() != solidCount) {
+            nav.build(solids, bgSize);
+            solidCount = solids.size();
+            for (npc& unit : npcs) {
+                if (unit.isMoving()) unit.replan();
+            }
+        }
+        std::vector<Vector2D<float>> before;
+        for (npc& unit : npcs) {
+            if (unit.needsRoute()) unit.setRoute(nav.findPath(unit.getPos(), unit.getTargetedPos()));
+            before.push_back(unit.getPos());
+        }
+        // pathfinding: npcs got stuck on a tree or wall between them and their destination; the grid is rebuilt from the standing trees and built walls whenever their count changes and every moving npc replans, each npc without a path gets one around them, and before keeps each npc's position for the stuck check
         for (npc& unit : npcs) unit.update(deltaTime);
 
         colliders.clear();
@@ -1057,6 +1114,8 @@ int main(int, char**)
             if (pushed != npcs[i].getPos()) npcs[i].pushTo(pushed);
         }
         // movement: npcs walked through each other; after all have moved, one collider per npc goes through resolveCollisions and every npc that was pushed takes its new position, kept inside the map. Other solid objects join by adding their collider to the same list
+        for (size_t i = 0; i < npcs.size(); ++i) npcs[i].trackProgress(before[i], deltaTime);
+        // pathfinding: an npc pushed back by others or a changed map can stall on its path; trackProgress compares the position after push-back with before, and after 500 ms of barely moving it drops the path so needsRoute gets a new one next frame
 
         for (size_t i = 0; i < npcs.size(); ++i) {
             const Vector2D<float> pos = npcs[i].getPos();
@@ -1203,6 +1262,17 @@ int main(int, char**)
             }
         }
         // ui: npcs sent together showed one cross each at their spread-out points; the cross is drawn at each destination's mark, the clicked point they share, so one click shows one cross until the last npc heading there arrives, and a mark on the object or on a ground item draws no cross but flags that object or item for the arrow
+        const Vector2D<float> pathCam = cameraPx();
+        std::vector<SDL_FPoint> pathPoints;
+        for (const npc& unit : npcs) {
+            if (!unit.isMoving()) continue;
+            pathPoints.clear();
+            pathPoints.push_back({unit.getPos().x - pathCam.x, unit.getPos().y - pathCam.y});
+            for (const Vector2D<float>& point : unit.getRoute()) pathPoints.push_back({point.x - pathCam.x, point.y - pathCam.y});
+            pathPoints.push_back({unit.getTargetedPos().x - pathCam.x, unit.getTargetedPos().y - pathCam.y});
+            if (!drawPathLine(renderer, pathPoints)) return fail("drawPathLine");
+        }
+        // pathfinding: the way an npc takes around trees and walls must be visible; every moving npc draws a white line pathWidth map px wide on the ground from its feet through each waypoint to targetedPos, in map px minus the camera like the sprites, and later rects set their own color
 
         drawables.clear();
         for (const GrassClump& clump : clumps) {
@@ -1330,7 +1400,7 @@ int main(int, char**)
         // unit_item: a ground item an npc is walking to shows the bobbing arrow above it in place of the cross
         if (dragging && !placing && !drawOutline(renderer, boxBetween(dragStart, toMap(mouse)))) return fail("drawOutline");
         // economy: a drag while placing draws ghost walls instead of the selection box
-        // render: draw order decides what covers what; background, then ground marks (footprints fading with age, cross at each moving npc's destination), then grass and npcs sorted by feet y, then selection arrows, drag box on top
+        // render: draw order decides what covers what; background, then ground marks (footprints fading with age, cross at each moving npc's destination, white path line of each moving npc), then grass and npcs sorted by feet y, then selection arrows, drag box on top
 
         if (!SDL_SetRenderScale(renderer, 1.0f, 1.0f)) return fail("SDL_SetRenderScale");
         if (!editor.draw(renderer, viewport, density)) return fail("editor draw");

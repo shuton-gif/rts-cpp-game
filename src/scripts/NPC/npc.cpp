@@ -1,6 +1,7 @@
 #include "NPC/npc.h"
 
 #include <cmath>
+#include <utility>
 
 npc::npc(int id, Vector2D<float> pos, int player)
 {
@@ -21,11 +22,15 @@ void npc::update(float deltaTime)
         this->targetedMark = this->queuedMark.front();
         this->queuedPos.erase(this->queuedPos.begin());
         this->queuedMark.erase(this->queuedMark.begin());
+        this->replan();
     }
     // movement: after arriving the npc must go on to the next added destination; when it stands on targetedPos and the queue is not empty, the oldest queued point becomes targetedPos
+    // pathfinding: the old path led to the old destination; popping a queued destination calls replan so main computes a path to the new targetedPos
 
-    const float dx = this->targetedPos.x - this->pos.x;
-    const float dy = this->targetedPos.y - this->pos.y;
+    while (!this->route.empty() && this->route.front() == this->pos) this->route.erase(this->route.begin());
+    const Vector2D<float> walkTo = this->route.empty() ? this->targetedPos : this->route.front();
+    const float dx = walkTo.x - this->pos.x;
+    const float dy = walkTo.y - this->pos.y;
     if (dx == 0.0f && dy == 0.0f) return;
 
     if (dx < 0.0f) this->facingLeft = true;
@@ -39,13 +44,17 @@ void npc::update(float deltaTime)
         this->facing = dx < 0.0f ? Facing::Left : Facing::Right;
     }
 
-    float step = this->speed * deltaTime;
-    if (dx != 0.0f && dy != 0.0f) step *= 0.70710678f;
-
-    this->moveX(step);
-    this->moveY(step);
+    const float step = this->speed * deltaTime;
+    const float dist = std::hypot(dx, dy);
+    if (dist <= step) {
+        this->pos = walkTo;
+        if (!this->route.empty()) this->route.erase(this->route.begin());
+    } else {
+        this->pos.x += dx / dist * step;
+        this->pos.y += dy / dist * step;
+    }
 }
-// movement: npc must walk at the same speed on any frame rate and face where it goes; each frame facing is picked from the sign of the remaining x and y (8 directions), then both axes step by speed * deltaTime, scaled by 1/sqrt(2) on diagonals
+// pathfinding: npcs must walk the path around trees and walls segment by segment at the same speed on any frame rate; the walking target is the first route waypoint or targetedPos when the route is empty, waypoints already stood on are dropped, facing is picked from the sign of x and y toward it (8 directions), and the npc steps speed * deltaTime straight along the vector, snapping onto the target and popping the waypoint when within one step
 
 void npc::moveX(float step)
 {
@@ -78,20 +87,24 @@ void npc::setDestinaion(Vector2D<float> clicked, Vector2D<float> mark)
     this->targetedMark = mark;
     this->queuedPos.clear();
     this->queuedMark.clear();
+    this->replan();
 }
 // movement: a plain right click is a new order; it replaces the destination and drops every queued one
+// pathfinding: the old path led to the old destination; a new order calls replan so main computes a path to the new targetedPos
 
 void npc::addDestination(Vector2D<float> clicked, Vector2D<float> mark)
 {
     if (!this->isMoving() && this->queuedPos.empty()) {
         this->targetedPos = clicked;
         this->targetedMark = mark;
+        this->replan();
     } else if (this->queuedPos.size() + 1 < maxDestinations) {
         this->queuedPos.push_back(clicked);
         this->queuedMark.push_back(mark);
     }
 }
 // movement: shift right click adds a destination after the current ones, 3 at most; a standing npc takes it as its destination, a moving one appends it to the queue, and it is ignored when targetedPos plus the queue already hold maxDestinations
+// pathfinding: a standing npc given a destination needs a path to it; only the branch that sets targetedPos calls replan, a queued destination gets its path when popped in update
 
 Collider npc::getCollider() const
 {
@@ -104,9 +117,54 @@ void npc::pushTo(Vector2D<float> pushed)
     this->pos = pushed;
 
     const float left = std::hypot(this->targetedPos.x - this->pos.x, this->targetedPos.y - this->pos.y);
-    if (standing || left <= arriveSlack) this->targetedPos = this->pos;
+    if (standing || left <= arriveSlack) {
+        this->targetedPos = this->pos;
+        this->route.clear();
+    }
 }
 // movement: a pushed npc must not fight the push; a standing npc stays where it was pushed, and a walking one that is pushed within arriveSlack of its destination counts as arrived there, so npcs sent to nearly the same spot settle side by side instead of shoving forever
+// pathfinding: an npc that counts as arrived must not walk leftover waypoints; setting targetedPos to pos also clears the route
+
+bool npc::needsRoute() const { return this->isMoving() && !this->routed; }
+const std::vector<Vector2D<float>>& npc::getRoute() const { return this->route; }
+// pathfinding: main computes a path only when an npc walks without one and draws the route as a white line; read-only, needsRoute is true while moving and not routed
+
+void npc::setRoute(std::vector<Vector2D<float>> points)
+{
+    if (!points.empty() && points.back() == this->targetedPos) points.pop_back();
+    this->route = std::move(points);
+    this->routed = true;
+    this->stuckTime = 0.0f;
+}
+// pathfinding: findPath ends its points with targetedPos, which update already walks to last; that point is dropped, the rest become the route, routed stops main asking again, and stuckTime restarts
+
+void npc::replan()
+{
+    this->routed = false;
+    this->route.clear();
+}
+// pathfinding: a new destination or a stuck npc needs a fresh path; replan clears the route and routed so needsRoute asks main for one
+
+bool npc::trackProgress(Vector2D<float> before, float deltaTime)
+{
+    if (!this->isMoving()) {
+        this->stuckTime = 0.0f;
+        return false;
+    }
+
+    const float moved = std::hypot(this->pos.x - before.x, this->pos.y - before.y);
+    if (moved < this->speed * deltaTime * 0.25f) {
+        this->stuckTime += deltaTime;
+    } else {
+        this->stuckTime = 0.0f;
+    }
+
+    if (this->stuckTime < stuckLimit) return false;
+    this->stuckTime = 0.0f;
+    this->replan();
+    return true;
+}
+// pathfinding: an npc blocked by something the path missed must not push forever; main passes the pos from before this frame, a frame moving under a quarter of a full step adds deltaTime to stuckTime, any other frame or standing resets it, and reaching stuckLimit ms resets it, replans and returns true
 
 void npc::setAim(Vector2D<float> point)
 {
