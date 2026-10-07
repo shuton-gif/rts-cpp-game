@@ -58,10 +58,12 @@ read [edit.md](/docs/edit.md)
 
 ### History
 read [history.md](/docs/history.md)
-- before comapact and autocompact, summarize session into .claude/history/
+- write history when a task ends (commit, or topic done and built), not before compact
 - file name `<topic_name>-<YY-MM-DD-TTTT>.json`
 - one file per topic, split if session had more than one
-- write history first, compact second, so nothing is lost if compact drops it
+- history is already on disk when compact or autocompact runs, so nothing is lost if compact drops it
+<!-- claude: /compact and autocompact give no turn before they run, so history written "before compact" never happened; it is now written at task end -->
+
 - dont read history on session start, only by grep `<topic> <latest 2>`
 <!-- history: long-term record lives in .claude/history/ as topic-first json so it is pulled by prefix glob on demand, and compact can drop aggressively -->
 

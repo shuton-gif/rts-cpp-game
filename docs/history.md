@@ -32,3 +32,10 @@
 - under 60 lines per file
 - `edits` lists final state only, not every intermediate edit
 - same topic on a later session: new file, dont rewrite old ones
+## When
+
+- task ends: after a commit, or when a topic is done and builds clean
+- not "before compact": `/compact` and autocompact run with no turn before them
+- user says "write histories": write now for every topic not yet written
+- topic changes again after its file: new file, old one stays
+<!-- claude: history written before compact never happened since compact gives no turn first; writing at task end keeps it on disk before any compact -->
