@@ -107,6 +107,8 @@ const float plankScale = 3.0f;
 const Vector2D<float> hpBarSize = {60.0f, 6.0f};
 const float hpBarGap = 8.0f;
 // economy: a felled tree drops plankCount planks within plankScatter map px, and the white hp bar is hpBarSize map px, hpBarGap below the tree's feet
+const float hpBarShow = 3000.0f;
+// combat: hp bars on every tree and post cluttered the map; a bar shows only for hpBarShow ms after the last damage
 const int treeTilesX = 30;
 const int treeTilesY = 32;
 const Vector2D<float> treeSize = {static_cast<float>(treeTilesX * tileRatioX), static_cast<float>(treeTilesY * tileRatioY)};
@@ -766,6 +768,12 @@ int main(int, char**)
     if (!SDL_GetTextureSize(plankSprite, &plankW, &plankH)) return fail("SDL_GetTextureSize plank");
     std::vector<bool> planksDropped(trees.size(), false);
     // economy: every tree drops its planks once; planksDropped[i] is set when trees[i] has dropped them
+    std::vector<int> treeLastHp;
+    for (const tree& stand : trees) treeLastHp.push_back(stand.getHp());
+    std::vector<float> treeHitAge(trees.size(), hpBarShow);
+    std::vector<int> wallLastHp;
+    std::vector<float> wallHitAge;
+    // combat: hp bars show only after damage; lastHp is the hp seen last frame and hitAge the ms since it last dropped, starting hidden at hpBarShow
 
     WallLook look;
     for (int i = 0; i < 2; ++i) {
@@ -1140,6 +1148,18 @@ int main(int, char**)
         // economy: each felled tree drops its planks once, around where it stood
         // economy: the tree drops wood when felled; once, plankCount planks are added as ground items at random spots within plankScatter map px of where it stood, after the item loop so the list is not changed while it is walked
 
+        for (size_t t = 0; t < trees.size(); ++t) {
+            treeHitAge[t] = trees[t].getHp() < treeLastHp[t] ? 0.0f : treeHitAge[t] + deltaTime;
+            treeLastHp[t] = trees[t].getHp();
+        }
+        wallLastHp.resize(walls.size(), wallHp);
+        wallHitAge.resize(walls.size(), hpBarShow);
+        for (size_t w = 0; w < walls.size(); ++w) {
+            wallHitAge[w] = walls[w].getHp() < wallLastHp[w] ? 0.0f : wallHitAge[w] + deltaTime;
+            wallLastHp[w] = walls[w].getHp();
+        }
+        // combat: damage from axes and arrows is all done by here; a drop in hp since last frame restarts the bar timer, otherwise it ages by deltaTime, and walls planned this frame start hidden
+
         if (!SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255)) return fail("SDL_SetRenderDrawColor");
         if (!SDL_RenderClear(renderer)) return fail("SDL_RenderClear");
         if (!SDL_SetRenderScale(renderer, zoom, zoom)) return fail("SDL_SetRenderScale");
@@ -1281,18 +1301,20 @@ int main(int, char**)
         for (size_t t = 0; t < trees.size(); ++t) {
             const tree& stand = trees[t];
             if (stand.isFelled()) continue;
-            if (!drawHpBar(renderer, stand.getPos(), static_cast<float>(stand.getHp()) / static_cast<float>(stand.getMaxHp()))) return fail("drawHpBar");
+            if (treeHitAge[t] < hpBarShow && !drawHpBar(renderer, stand.getPos(), static_cast<float>(stand.getHp()) / static_cast<float>(stand.getMaxHp()))) return fail("drawHpBar");
             if (!stand.isClicked() && !treeTargeted[t]) continue;
             const Vector2D<float> arrow = {stand.getPos().x, objectRect(stand).y - arrowGap + arrowBob};
             if (!drawSprite(renderer, sprites.selectedArrow, arrow, 255, 0.0, arrowSize)) return fail("drawSprite selectedArrow");
         }
-        // economy: the tree shows its hp; the white bar is drawn over the sprites, under the arrows, while the tree stands, for every tree
+        // combat: the tree shows its hp only for hpBarShow ms after it was last hit; the white bar is drawn over the sprites, under the arrows
         for (size_t w = 0; w < walls.size(); ++w) {
             const wall& segment = walls[w];
             if (segment.isDestroyed()) continue;
             const float left = segment.isBuilt() ? static_cast<float>(segment.getHp()) / static_cast<float>(segment.getMaxHp()) : segment.getProgress();
             const float barWidth = static_cast<float>(tileRatioX) - 2.0f;
-            if ((segment.isBuilt() || segment.hasAllPlanks()) && !drawHpBar(renderer, segment.getPos(), left, barWidth)) return fail("drawHpBar wall");
+            const bool showBar = segment.isBuilt() ? wallHitAge[w] < hpBarShow : segment.hasAllPlanks();
+            if (showBar && !drawHpBar(renderer, segment.getPos(), left, barWidth)) return fail("drawHpBar wall");
+            // combat: a built post shows its hp bar only for hpBarShow ms after it was last hit, and a plan with all planks still shows its build progress
             if (!wallTargeted[w]) continue;
             const Vector2D<float> arrow = {segment.getPos().x, objectRect(segment).y - arrowGap + arrowBob};
             // economy: a post's bar is a tile wide minus 2 map px so bars of posts side by side stay apart, and its arrow sits above the post

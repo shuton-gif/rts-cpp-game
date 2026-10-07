@@ -17,7 +17,10 @@ static const SDL_Color editorPink = {0xc5, 0x86, 0xc0, 255};
 static const SDL_Color editorBlue = {0x4f, 0xc1, 0xff, 255};
 static const SDL_Color editorOrange = {0xce, 0x91, 0x78, 255};
 static const SDL_Color editorRed = {0xf4, 0x47, 0x47, 255};
-// ui_editor: scripts are edited in game so npc behavior can change without leaving it, and a familiar dark theme keeps it readable; the panel uses fixed VS Code like colors for text, tabs, comments, keywords, calls, args and errors
+static const SDL_Color editorPopup = {0x25, 0x25, 0x26, 255};
+static const SDL_Color editorPicked = {0x3a, 0x3d, 0x41, 255};
+static const Uint8 panelAlpha = 204;
+// ui_editor: scripts are edited in game so npc behavior can change without leaving it, and a familiar dark theme keeps it readable; the panel uses fixed VS Code like colors for text, tabs, comments, keywords, calls, args, errors, the autocomplete popup and its picked row, and its black background is panelAlpha (0.8 opacity)
 
 static bool isWordChar(char c)
 {
@@ -74,6 +77,40 @@ std::vector<EditorToken> colorLine(const std::string& line)
     return tokens;
 }
 // ui_editor: scripts are edited in game so npc behavior can change without leaving it, and colors show mistakes before saving; '#' to the end is green, if/not/else pink, a known call blue, text inside '(' ')' orange (stopping at ')' or '#'), and everything else white
+
+std::vector<Suggestion> suggest(const std::string& line, int col, bool force, int& wordStart)
+{
+    static const char* const keywords[] = {"if", "not", "else"};
+    static const char* const calls[] = {"find", "holding", "moveTo", "pickup", "target", "use", "full", "build", "drop", "stop"};
+    static const char* const args[] = {"plank", "axe", "bow", "sword", "sheild", "pick-axe", "hoe", "tree", "plan", "wall", "target"};
+
+    const std::size_t end = static_cast<std::size_t>(std::clamp(col, 0, static_cast<int>(line.size())));
+    std::size_t start = end;
+    while (start > 0 && (isWordChar(line[start - 1]) || line[start - 1] == '-')) --start;
+    wordStart = static_cast<int>(start);
+
+    std::vector<Suggestion> found;
+    const std::string before = line.substr(0, start);
+    if (before.find('#') != std::string::npos) return found;
+    const std::string prefix = line.substr(start, end - start);
+    if (prefix.empty() && !force) return found;
+
+    const std::size_t open = before.rfind('(');
+    const std::size_t close = before.rfind(')');
+    const bool inArg = open != std::string::npos && (close == std::string::npos || close < open);
+    const auto add = [&found, &prefix](const char* name, const std::string& insert, int back, SDL_Color color) {
+        const std::string text = name;
+        if (text.compare(0, prefix.size(), prefix) == 0) found.push_back({text, insert, back, color});
+    };
+    if (inArg) {
+        for (const char* arg : args) add(arg, arg, 0, editorOrange);
+        return found;
+    }
+    for (const char* keyword : keywords) add(keyword, std::string(keyword) + " ", 0, editorPink);
+    for (const char* call : calls) add(call, std::string(call) + "()", 1, editorBlue);
+    return found;
+}
+// ui_editor: typing skill names and args by hand was slow and error prone; suggest walks back over [A-Za-z0-9_-] from col, gives nothing after '#' or for an empty word unless force, and lists case-sensitive prefix matches (exact ones kept): args as is inside an unclosed '(', else keywords with a trailing space then calls as name() with the cursor stepped back into the parens
 
 static float textScale(float density)
 {
@@ -154,8 +191,9 @@ void scriptEditor::selectTab(int index)
     this->scroll = 0;
     this->errorLine = -1;
     this->status.clear();
+    this->completing = false;
 }
-// ui_editor: another script's error does not belong to this one; switching tab puts the cursor and scroll at the top and clears the error line and status
+// ui_editor: another script's error does not belong to this one, and typing skill names and args by hand was slow and error prone; switching tab puts the cursor and scroll at the top, clears the error line and status, and closes the autocomplete popup
 
 void scriptEditor::insertText(const std::string& text)
 {
@@ -242,9 +280,35 @@ void scriptEditor::save()
 }
 // ui_editor: scripts are edited in game so npc behavior can change without leaving it, and the change must survive a rebuild; save checks the text with parseScript (error row from "line N: msg"), writes it to the source and build dirs even when broken, and sets the saved flag
 
+void scriptEditor::refreshSuggestions(bool force)
+{
+    this->completing = false;
+    if (this->buffers.empty()) return;
+    this->suggestions = suggest(this->lines()[this->row], this->col, force, this->wordStart);
+    this->picked = 0;
+    this->pickedScroll = 0;
+    this->completing = !this->suggestions.empty();
+}
+
+void scriptEditor::acceptSuggestion()
+{
+    this->completing = false;
+    if (this->buffers.empty() || this->picked < 0 || this->picked >= static_cast<int>(this->suggestions.size())) return;
+    const Suggestion& choice = this->suggestions[this->picked];
+    std::string& line = this->lines()[this->row];
+    const int start = std::clamp(this->wordStart, 0, this->col);
+    line.replace(static_cast<std::size_t>(start), static_cast<std::size_t>(this->col - start), choice.insert);
+    this->col = start + static_cast<int>(choice.insert.size()) - choice.cursorBack;
+}
+// ui_editor: typing skill names and args by hand was slow and error prone; refreshSuggestions reruns suggest at the cursor (picked row and list scroll back to the top) and opens the popup only on a match, and acceptSuggestion replaces the typed word with the picked insert text and steps the cursor back by its cursorBack
+
 bool scriptEditor::handleKey(const SDL_KeyboardEvent& key, float density)
 {
     const SDL_Keycode code = key.key;
+    if (code == SDLK_ESCAPE && this->completing) {
+        this->completing = false;
+        return true;
+    }
     if (code == SDLK_F1 || code == SDLK_ESCAPE) {
         this->close();
         return true;
@@ -254,6 +318,22 @@ bool scriptEditor::handleKey(const SDL_KeyboardEvent& key, float density)
         return true;
     }
     if (this->buffers.empty()) return true;
+    if ((key.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0 && code == SDLK_SPACE) {
+        this->refreshSuggestions(true);
+        return true;
+    }
+    if (this->completing && (code == SDLK_UP || code == SDLK_DOWN)) {
+        const int count = static_cast<int>(this->suggestions.size());
+        this->picked = std::clamp(this->picked + (code == SDLK_UP ? -1 : 1), 0, count - 1);
+        this->pickedScroll = std::clamp(this->pickedScroll, std::max(0, this->picked - 7), this->picked);
+        return true;
+    }
+    if (this->completing && code == SDLK_TAB) {
+        this->acceptSuggestion();
+        this->keepCursorVisible(this->layout(textScale(density)).visible);
+        return true;
+    }
+    // ui_editor: typing skill names and args by hand was slow and error prone; while the popup is open Escape closes only it, Up/Down move the picked row (clamped, list scrolled to keep it in the 8 rows) and Tab accepts it, and Ctrl or Cmd+Space opens it even for an empty word
 
     std::vector<std::string>& text = this->lines();
     const int last = static_cast<int>(text.size()) - 1;
@@ -263,6 +343,7 @@ bool scriptEditor::handleKey(const SDL_KeyboardEvent& key, float density)
     case SDLK_LEFT:
         if (this->col > 0) --this->col;
         else if (this->row > 0) this->col = length(--this->row);
+        this->completing = false;
         break;
     case SDLK_RIGHT:
         if (this->col < length(this->row)) ++this->col;
@@ -270,17 +351,36 @@ bool scriptEditor::handleKey(const SDL_KeyboardEvent& key, float density)
             ++this->row;
             this->col = 0;
         }
+        this->completing = false;
         break;
     case SDLK_UP: this->row = std::max(0, this->row - 1); break;
     case SDLK_DOWN: this->row = std::min(last, this->row + 1); break;
-    case SDLK_HOME: this->col = 0; break;
-    case SDLK_END: this->col = length(this->row); break;
-    case SDLK_PAGEUP: this->row = std::max(0, this->row - visible); break;
-    case SDLK_PAGEDOWN: this->row = std::min(last, this->row + visible); break;
-    case SDLK_BACKSPACE: this->backspace(); break;
+    case SDLK_HOME:
+        this->col = 0;
+        this->completing = false;
+        break;
+    case SDLK_END:
+        this->col = length(this->row);
+        this->completing = false;
+        break;
+    case SDLK_PAGEUP:
+        this->row = std::max(0, this->row - visible);
+        this->completing = false;
+        break;
+    case SDLK_PAGEDOWN:
+        this->row = std::min(last, this->row + visible);
+        this->completing = false;
+        break;
+    case SDLK_BACKSPACE:
+        this->backspace();
+        this->refreshSuggestions(false);
+        break;
     case SDLK_DELETE: this->deleteForward(); break;
     case SDLK_RETURN:
-    case SDLK_KP_ENTER: this->newLine(); break;
+    case SDLK_KP_ENTER:
+        this->newLine();
+        this->completing = false;
+        break;
     case SDLK_TAB: this->insertText("  "); break;
     default: break;
     }
@@ -288,7 +388,7 @@ bool scriptEditor::handleKey(const SDL_KeyboardEvent& key, float density)
     this->keepCursorVisible(visible);
     return true;
 }
-// ui_editor: the game must not react to typing while the editor is open; F1 or Escape close it, Ctrl or Cmd+S saves, arrows, Home/End and PageUp/PageDown (one screen of rows) move the cursor, Backspace, Delete, Return and Tab (2 spaces) edit, and every key is consumed
+// ui_editor: the game must not react to typing while the editor is open, and typing skill names and args by hand was slow and error prone; F1 or Escape close it, Ctrl or Cmd+S saves, arrows, Home/End and PageUp/PageDown (one screen of rows) move the cursor and close the popup, Backspace reruns the suggestions, Delete and Return (closes the popup) edit, Tab with the popup closed inserts 2 spaces, and every key is consumed
 
 bool scriptEditor::handleMouse(const SDL_Event& event, float density)
 {
@@ -317,6 +417,8 @@ bool scriptEditor::handleMouse(const SDL_Event& event, float density)
         return true;
     }
     if (event.type != SDL_EVENT_MOUSE_BUTTON_DOWN || event.button.button != SDL_BUTTON_LEFT) return true;
+    this->completing = false;
+    // ui_editor: typing skill names and args by hand was slow and error prone; a left click inside the panel moves away from the typed word, so it closes the autocomplete popup
 
     if (pixel.y >= area.tabY && pixel.y < area.tabY + area.line) {
         float left = this->panel.x + area.pad;
@@ -351,8 +453,8 @@ bool scriptEditor::drawContents(SDL_Renderer* renderer, float density)
     const float right = this->panel.x + this->panel.w - area.pad;
 
     if (!SDL_SetRenderScale(renderer, 1.0f, 1.0f)) return false;
-    if (!SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE)) return false;
-    if (!SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255)) return false;
+    if (!SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND)) return false;
+    if (!SDL_SetRenderDrawColor(renderer, 0, 0, 0, panelAlpha)) return false;
     if (!SDL_RenderFillRect(renderer, &this->panel)) return false;
 
     float left = this->panel.x + area.pad;
@@ -366,7 +468,7 @@ bool scriptEditor::drawContents(SDL_Renderer* renderer, float density)
         }
         left += width + area.cell;
     }
-    // ui_editor: the panel hides the game behind it and the current tab must stand out; an opaque black panel is filled with blend none, then a #333333 box behind the current tab
+    // ui_editor: the game should show faintly behind the editor and the current tab must stand out; the black panel is blended at panelAlpha (0.8), then a #333333 box behind the current tab
 
     if (!SDL_SetRenderScale(renderer, scale, scale)) return false;
     const SDL_Rect inner = {static_cast<int>(this->panel.x / scale), static_cast<int>(this->panel.y / scale), static_cast<int>(this->panel.w / scale), static_cast<int>(this->panel.h / scale)};
@@ -413,9 +515,51 @@ bool scriptEditor::drawContents(SDL_Renderer* renderer, float density)
     if (!visible) return true;
     const SDL_FRect cursor = {cursorX / scale, (area.textY + static_cast<float>(this->row - this->scroll) * area.line + scale) / scale, 1.0f, SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE};
     if (!SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255)) return false;
-    return SDL_RenderFillRect(renderer, &cursor);
+    if (!SDL_RenderFillRect(renderer, &cursor)) return false;
+    return this->drawSuggestions(renderer, scale, area);
 }
-// ui_editor: the caret shows where typing goes; drawn last at the text scale as a white bar 1 x scale px wide and one glyph tall at the cursor column, hidden when scrolled or clipped away
+// ui_editor: the caret shows where typing goes, and typing skill names and args by hand was slow and error prone; drawn at the text scale as a white bar 1 x scale px wide and one glyph tall at the cursor column, hidden when scrolled or clipped away, with the autocomplete popup drawn over everything after it
+
+bool scriptEditor::drawSuggestions(SDL_Renderer* renderer, float scale, const editorLayout& area)
+{
+    if (!this->completing || this->suggestions.empty()) return true;
+    const int count = static_cast<int>(this->suggestions.size());
+    const int rows = std::min(8, count);
+    this->picked = std::clamp(this->picked, 0, count - 1);
+    this->pickedScroll = std::clamp(this->pickedScroll, std::max(0, this->picked - rows + 1), std::min(this->picked, count - rows));
+
+    std::size_t widest = 0;
+    for (const Suggestion& choice : this->suggestions) widest = std::max(widest, choice.text.size());
+    const float w = static_cast<float>(widest + 2) * area.cell;
+    const float h = static_cast<float>(rows) * area.line + 2.0f * area.cell;
+    const float lineY = area.textY + static_cast<float>(this->row - this->scroll) * area.line;
+    const float bottom = area.textY + static_cast<float>(area.visible) * area.line;
+    float y = lineY + area.line;
+    if (y + h > bottom) y = lineY - h;
+    y = std::max(y, this->panel.y);
+    const float minX = this->panel.x + area.pad;
+    const float maxX = std::floor((this->panel.x + this->panel.w - area.pad - w) / scale) * scale;
+    const float x = std::max(minX, std::min(area.textX + static_cast<float>(this->wordStart) * area.cell, maxX));
+
+    const SDL_Rect inner = {static_cast<int>(this->panel.x / scale), static_cast<int>(this->panel.y / scale), static_cast<int>(this->panel.w / scale), static_cast<int>(this->panel.h / scale)};
+    if (!SDL_SetRenderClipRect(renderer, &inner)) return false;
+    const SDL_FRect box = {x / scale, y / scale, w / scale, h / scale};
+    if (!SDL_SetRenderDrawColor(renderer, editorPopup.r, editorPopup.g, editorPopup.b, editorPopup.a)) return false;
+    if (!SDL_RenderFillRect(renderer, &box)) return false;
+    for (int i = 0; i < rows; ++i) {
+        const int index = this->pickedScroll + i;
+        const float rowY = y + area.cell + static_cast<float>(i) * area.line;
+        if (index == this->picked) {
+            const SDL_FRect highlight = {x / scale, rowY / scale, w / scale, area.line / scale};
+            if (!SDL_SetRenderDrawColor(renderer, editorPicked.r, editorPicked.g, editorPicked.b, editorPicked.a)) return false;
+            if (!SDL_RenderFillRect(renderer, &highlight)) return false;
+        }
+        const Suggestion& choice = this->suggestions[index];
+        if (!drawText(renderer, x + area.cell, rowY + scale, scale, choice.text, choice.color)) return false;
+    }
+    return SDL_SetRenderClipRect(renderer, nullptr);
+}
+// ui_editor: typing skill names and args by hand was slow and error prone; the popup is a #252526 box with one cell of padding under the cursor line (above it when it would pass the text area bottom), left at the typed word start and clamped inside the panel, showing up to 8 suggestions in their syntax colors from the list scroll with the picked row on #3a3d41
 
 void scriptEditor::open(SDL_Window* window, const std::vector<std::string>& names, const std::string& sourceDir, const std::string& buildDir)
 {
@@ -454,10 +598,11 @@ void scriptEditor::close()
 {
     if (this->window) SDL_StopTextInput(this->window);
     this->opened = false;
+    this->completing = false;
 }
 
 bool scriptEditor::isOpen() const { return this->opened; }
-// ui_editor: typing must go back to being game keys after closing; close stops text input and hides the panel, keeping every buffer for the next open
+// ui_editor: typing must go back to being game keys after closing, and typing skill names and args by hand was slow and error prone; close stops text input and hides the panel and the autocomplete popup, keeping every buffer for the next open
 
 bool scriptEditor::handleEvent(const SDL_Event& event, float density)
 {
@@ -466,8 +611,10 @@ bool scriptEditor::handleEvent(const SDL_Event& event, float density)
     case SDL_EVENT_TEXT_INPUT:
         if (!this->buffers.empty()) {
             this->insertText(event.text.text);
+            this->refreshSuggestions(false);
             this->keepCursorVisible(this->layout(textScale(density)).visible);
         }
+        // ui_editor: typing skill names and args by hand was slow and error prone; every text input reruns the suggestions for the word before the cursor, opening the popup on a match and closing it otherwise
         return true;
     case SDL_EVENT_KEY_DOWN: return this->handleKey(event.key, density);
     case SDL_EVENT_KEY_UP: return true;
