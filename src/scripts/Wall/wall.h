@@ -3,15 +3,16 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "GameObject/gameObject.h"
 #include "Vector2D.h"
 
-const int wallGroupSize = 4;
+const int wallGroupSize = 5;
 const int wallCost = wallGroupSize;
 const float wallBuildTime = 2000.0f * wallGroupSize;
 const int wallHp = 100 * 2;
-// economy-wall-group: walls are paid and broken in groups of wallGroupSize posts, not one post at a time; a group costs and builds like 4 posts even with fewer planned, and its one hp pool is worth 2 posts
+// economy-wall-group: walls are paid and broken in groups of wallGroupSize posts, not one post at a time; a group takes one plank per post of a full group and builds like wallGroupSize posts even with fewer planned, and its one hp pool is worth 2 posts
 
 struct WallGroup {
     int delivered = 0;
@@ -21,8 +22,9 @@ struct WallGroup {
     int posts = 0;
     Vector2D<float> first = {0.0f, 0.0f};
     Vector2D<float> feetSum = {0.0f, 0.0f};
+    std::vector<int> haulers;
 };
-// economy-wall-group: the posts of a group must fill, build and die together; each post shares one WallGroup holding planks, build work and hp, plus its posts' feet so the bar can sit at their middle
+// economy-wall-group: the posts of a group must fill, build and die together; each post shares one WallGroup holding planks, build work and hp, its posts' feet so the bar can sit at their middle, and the npc ids hauling a plank to it
 
 class wall : public GameObject
 {
@@ -43,6 +45,9 @@ public:
     int getDelivered() const;
     bool build(float deltaTime);
     float getProgress() const;
+    bool claim(int npcId);
+    void release(int npcId);
+    // economy-wall-group: every npc on a group hauled a plank however many were left, so extras arrived late; claim is true while delivered planks plus other npcs' claims leave a plank for npcId, and release gives the claim back
     // economy-wall-group: a plan's group fills up one plank per deliver (false once it has wallCost), then build adds deltaTime ms of work and is true on the frame it finishes; getProgress is 0 to 1
 
     bool damage(int amount);

@@ -54,9 +54,12 @@ void agent::stop(World& world)
     for (const std::unique_ptr<item>& thing : world.items) {
         if (thing->getFetcher() == this->npcId && !thing->isHeld()) thing->setFetcher(-1);
     }
+    for (const auto& [name, slot] : this->slots) {
+        if (slot.kind == Slot::Kind::Wall && slot.index >= 0 && static_cast<std::size_t>(slot.index) < world.walls.size()) world.walls[slot.index].release(this->npcId);
+    }
     this->slots.clear();
 }
-// ai_script: a stopped behavior must not keep items from other npcs; every ground item this npc was fetching is freed and the slots are cleared
+// economy-wall-group: a stopped behavior must not keep items or plank claims from other npcs; every ground item this npc was fetching is freed, its wall slots give back their claims and the slots are cleared
 
 void agent::forget(const item* thing)
 {
@@ -336,6 +339,7 @@ Status agent::use(const std::string& name, World& world)
         if (plan == this->slots.end() || plan->second.kind != Slot::Kind::Wall) return Status::Failed;
         if (!this->valid("plan", world) || !this->beside("plan", world)) return Status::Failed;
         if (!world.walls[plan->second.index].deliver()) return Status::Failed;
+        world.walls[plan->second.index].release(this->npcId);
         world.consumed.push_back(held);
         return Status::Done;
     }
@@ -344,16 +348,16 @@ Status agent::use(const std::string& name, World& world)
     if (!held->swings()) held->use(world.npcs[this->npcId], nullptr);
     return Status::Done;
 }
-// ai_script: use acts with the held item; a plank is delivered to the plan beside the npc and put in consumed, a tool is Running while it swings and starts the next use when idle, and a bow fires at once like E (an axe's hit comes from main's item loop when the swing ends)
+// economy-wall-group: use acts with the held item; a plank is delivered to the plan beside the npc, gives back the npc's claim and is put in consumed, a tool is Running while it swings and starts the next use when idle, and a bow fires at once like E (an axe's hit comes from main's item loop when the swing ends)
 
 Status agent::full(const std::string& name, World& world)
 {
     if (!this->valid(name, world)) return Status::Failed;
     const Slot& slot = this->slots[name];
     if (slot.kind != Slot::Kind::Wall) return Status::Failed;
-    return world.walls[slot.index].hasAllPlanks() ? Status::Done : Status::Failed;
+    return world.walls[slot.index].claim(this->npcId) ? Status::Failed : Status::Done;
 }
-// ai_script: full tells hauling from building; done when the wall slot already has every plank it needs
+// economy-wall-group: only the npcs a group still needs may haul; full is Failed for an npc that holds a plank claim, so it hauls, and Done for one with no plank left to claim, so it goes to the plan and builds once every plank is in
 
 Status agent::build(const std::string& name, World& world)
 {

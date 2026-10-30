@@ -39,6 +39,17 @@ bool wall::hasAllPlanks() const { return this->group->delivered >= wallCost; }
 int wall::getDelivered() const { return this->group->delivered; }
 // economy-wall-group: a plan takes planks for its whole group until it has wallCost; a plank brought after that is refused so the caller keeps it
 
+bool wall::claim(int npcId)
+{
+    this->release(npcId);
+    if (this->group->delivered + static_cast<int>(this->group->haulers.size()) >= wallCost) return false;
+    this->group->haulers.push_back(npcId);
+    return true;
+}
+
+void wall::release(int npcId) { std::erase(this->group->haulers, npcId); }
+// economy-wall-group: only the planks still missing get a hauler; claim drops npcId's old claim, then takes a slot if delivered planks plus the other claims are under wallCost, so asking twice never counts twice
+
 bool wall::build(float deltaTime)
 {
     if (this->group->built || !this->hasAllPlanks()) return false;

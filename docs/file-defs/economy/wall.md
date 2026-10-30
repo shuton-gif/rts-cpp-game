@@ -3,7 +3,7 @@
 - **Path:** `src/scripts/Wall/wall.h`, `src/scripts/Wall/wall.cpp`
 - **Topic:** economy
 - **Purpose:** One wall post in a group of up to `wallGroupSize`: the group shares planks, build time and hp, and all its posts stand and disappear together.
-- **Types:** `WallGroup` holds the shared `delivered`, `progress`, `built`, `hp`, the placed `posts` count, the `first` post's feet and `feetSum`.
+- **Types:** `WallGroup` holds the shared `delivered`, `progress`, `built`, `hp`, the placed `posts` count, the `first` post's feet, `feetSum` and the `haulers` npc ids.
 
 ## Functions
 
@@ -128,7 +128,7 @@ Checks whether the plan has `wallCost` or more planks.
 
 | Topic | File | Where |
 | --- | --- | --- |
-| ai | `src/scripts/AI/agent.cpp` | `agent::full`, `agent::build` |
+| ai | `src/scripts/AI/agent.cpp` | `agent::build` |
 | core | `src/scripts/GameScene/main.cpp` | `main` |
 
 ### `getDelivered`
@@ -149,7 +149,47 @@ Returns how many planks the plan has.
 
 | Topic | File | Where |
 | --- | --- | --- |
-| | | not called |
+| core | `src/scripts/GameScene/main.cpp` | `main` |
+
+### `claim`
+
+Gives npcId a plank to haul to the group, if one is still needed. Drops npcId's old claim first, so asking twice never counts twice.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `npcId` | `int` | npc asking to haul |
+
+**Output:** `bool`: true when npcId now holds a claim; false when delivered planks plus other claims reach `wallCost`
+
+**Side effects:** changes the group's `haulers`
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ai | `src/scripts/AI/agent.cpp` | `agent::full` |
+
+### `release`
+
+Gives back npcId's claim, if it has one.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `npcId` | `int` | npc giving the claim back |
+
+**Output:** none
+
+**Side effects:** changes the group's `haulers`
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ai | `src/scripts/AI/agent.cpp` | `agent::stop`, `agent::use` |
 
 ### `build`
 

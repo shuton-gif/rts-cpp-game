@@ -85,6 +85,8 @@ struct Sprites {
 };
 
 const float arrowGap = 20.0f;
+const float wallCountGap = 4.0f;
+// economy-wall-group: the plank counter needs room above its post; it sits wallCountGap map px above the post height
 const float arrowBobHeight = 4.0f;
 const float arrowSize = 0.5f;
 const Uint8 selectFillAlpha = 153;
@@ -428,6 +430,19 @@ static bool drawHpBar(SDL_Renderer* renderer, const Vector2D<float> feet, const 
 }
 // economy: a tree's hp must be visible; a white bar hpBarSize map px sits hpBarGap below its feet, the 1 px outline is full hp and the white fill is hp / maxHp of it, skipped outside the render area
 // economy: walls show hp and build progress with the same bar; the caller passes the feet and the filled part (0 to 1)
+
+static bool drawWallCount(SDL_Renderer* renderer, const Vector2D<float> middle, const float height, const int delivered)
+{
+    const std::string text = std::to_string(delivered) + " / " + std::to_string(wallCost);
+    const float glyph = static_cast<float>(SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE);
+    const SDL_FRect area = {std::floor(middle.x - static_cast<float>(text.size()) * glyph / 2.0f), std::floor(middle.y - height - wallCountGap - glyph), static_cast<float>(text.size()) * glyph, glyph};
+    if (!inRenderArea(area)) return true;
+
+    const Vector2D<float> cam = cameraPx();
+    if (!SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255)) return false;
+    return SDL_RenderDebugText(renderer, area.x - cam.x, area.y - cam.y, text.c_str());
+}
+// economy-wall-group: the planks in a plan must be visible to see npcs over-delivering; white `X / wallCost` debug text is centered wallCountGap map px above the post height over the group's middle, skipped outside the render area
 
 static bool drawPathLine(SDL_Renderer* renderer, const std::vector<SDL_FPoint>& points)
 {
@@ -1415,6 +1430,8 @@ int main(int, char**)
             const bool showBar = segment.isGroupFirst() && (segment.isBuilt() ? wallHitAge[w] < hpBarShow : segment.hasAllPlanks());
             if (showBar && !drawHpBar(renderer, segment.getGroupMiddle(), left)) return fail("drawHpBar wall");
             // economy-wall-group: a group has one hp, so one bar at the middle of its posts; only its first post draws it, for hpBarShow ms after a hit once built, and with all planks in as a plan to show build progress
+            if (segment.isGroupFirst() && !segment.isBuilt() && !drawWallCount(renderer, segment.getGroupMiddle(), std::max(look.sizes[0].y, look.sizes[1].y), segment.getDelivered())) return fail("drawWallCount");
+            // economy-wall-group: a group being made shows its plank counter from 0 until it is built, drawn once by its first post above its middle
             if (!wallTargeted[w]) continue;
             const Vector2D<float> arrow = {segment.getPos().x, objectRect(segment).y - arrowGap + arrowBob};
             // economy: a post's arrow sits above the post

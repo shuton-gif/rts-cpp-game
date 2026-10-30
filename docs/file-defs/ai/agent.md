@@ -52,7 +52,7 @@ Replaces the running behavior with a new script and slots.
 
 ### `stop`
 
-Ends the behavior and frees reserved items.
+Ends the behavior, frees reserved items and gives back plank claims.
 
 **Input**
 
@@ -62,7 +62,7 @@ Ends the behavior and frees reserved items.
 
 **Output:** `void`
 
-**Side effects:** sets `active = false`. Every item in `world.items` with fetcher `npcId` and not held gets `setFetcher(-1)`. Clears `slots`.
+**Side effects:** sets `active = false`. Every Wall slot calls `wall::release(npcId)`. Every item in `world.items` with fetcher `npcId` and not held gets `setFetcher(-1)`. Clears `slots`.
 
 **Used in**
 
@@ -458,7 +458,7 @@ Acts with the held item.
 
 **Output:** `Status`: Failed if `holding(name)` is not Done. Plank: Done when delivered to slot `plan`; Failed if no valid plan slot, not beside, or `deliver()` fails. Tool: Running while `isUsing()` or `startUse()` fails; Done after starting.
 
-**Side effects:** plank: `wall::deliver()` on the plan, pushes the plank into `world.consumed`. Tool: `item::startUse()`; if the item does not swing, `item::use(npc, nullptr)` at once.
+**Side effects:** plank: `wall::deliver()` then `wall::release(npcId)` on the plan, pushes the plank into `world.consumed`. Tool: `item::startUse()`; if the item does not swing, `item::use(npc, nullptr)` at once.
 
 **Used in**
 
@@ -468,7 +468,7 @@ Acts with the held item.
 
 ### `full`
 
-Checks whether a wall slot has all its planks.
+Tells hauling from building: claims a plank for this npc on a wall slot, if the group still needs one.
 
 **Input**
 
@@ -477,9 +477,9 @@ Checks whether a wall slot has all its planks.
 | `name` | `const std::string&` | slot name |
 | `world` | `World&` | scene lists and frame data |
 
-**Output:** `Status`: Done if the slot is a valid Wall and `hasAllPlanks()`; else Failed.
+**Output:** `Status`: Failed if the slot is not a valid Wall or this npc holds a plank claim (it hauls); Done if no plank is left to claim (it builds).
 
-**Side effects:** none
+**Side effects:** `wall::claim(npcId)` on the slot's wall
 
 **Used in**
 

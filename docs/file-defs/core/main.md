@@ -525,6 +525,29 @@ Draws a white hp or progress bar `hpBarGap` below a feet point.
 | --- | --- | --- |
 | core | `src/scripts/GameScene/main.cpp` | `main` |
 
+### `drawWallCount`
+
+Draws a group's `X / wallCost` plank counter above its middle.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `renderer` | `SDL_Renderer*` | target renderer |
+| `middle` | `const Vector2D<float>` | group's middle feet in map px |
+| `height` | `const float` | post height in map px; the text sits `wallCountGap` above it |
+| `delivered` | `const int` | planks in the group so far |
+
+**Output:** `bool`: false if an SDL call fails; true when skipped outside the render area
+
+**Side effects:** Sets draw color, `SDL_RenderDebugText`.
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| core | `src/scripts/GameScene/main.cpp` | `main` |
+
 ### `drawPathLine`
 
 Draws a white path `pathWidth` wide through points, with a square on each joint.
