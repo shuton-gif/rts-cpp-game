@@ -65,3 +65,6 @@ crash/
 # Claude: local settings and session history are per machine; shared rules live in CLAUDE.md and docs/
 .claude/settings.local.json
 .claude/history/
+histories/
+CLAUDE.local.md
+# claude: CLAUDE.local.md is personal and histories/ is per machine session notes, so neither is committed

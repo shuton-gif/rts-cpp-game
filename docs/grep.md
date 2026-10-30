@@ -2,35 +2,36 @@
 
 arg: `<topic> <latest N>` (default N = 2)
 
-- dir: `.claude/history/`
-- file name: `<topic_name>-<YY-MM-DD-TTTT>.json` (see [history.md](/docs/history.md))
-- match `<topic>` as name prefix by glob, not substring (`ui` must not hit `build`)
-- sort by the date part (after first `-`), take the last N, read those only
+- dir: `histories/`
+- file name: `<topic>-<YYYY-MM-DD_HHMM>.md` (see [history.md](/docs/history.md))
+- match `<topic>-` as name prefix by glob, not substring (`ui` must not hit `build` or `unit`)
+- newest first by modified time, take N, read those only
 - no hit -> try the `alias` words of the topic (see [topic.md](/docs/topic.md)), then file content
-<!-- history: topic-first names; prefix glob picks the topic and its subs, sort on field 2 orders them by time across subs -->
+- still no hit -> same search in the old `.claude/history/*.json` archive (snake_case names)
+<!-- history: histories/ md replaced .claude/history json; `<topic>-*` glob picks the topic and its subs, ls -t orders by time across subs -->
 
 topic with all its subs:
 
 ```bash
-cd .claude/history && ls <topic>[-_]* | sort -t- -k2 | tail -n 2
-```
-
-one exact topic or sub:
-
-```bash
-cd .claude/history && ls <topic_name>-* | tail -n 2
+ls -t histories/<topic>-* | head -n 2
 ```
 
 no name hit:
 
 ```bash
-cd .claude/history && grep -il "<topic>" *.json | sort -t- -k2 | tail -n 2
+grep -il "<topic>" histories/*.md | xargs ls -t | head -n 2
 ```
 
 latest of any topic:
 
 ```bash
-cd .claude/history && ls | sort -t- -k2 | tail -n 2
+ls -t histories/*.md | head -n 2
+```
+
+old archive:
+
+```bash
+cd .claude/history && ls <topic>[-_]* | sort -t- -k2 | tail -n 2
 ```
 
 ## Code search

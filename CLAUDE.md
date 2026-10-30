@@ -58,16 +58,25 @@ read [edit.md](/docs/edit.md)
 
 ### History
 read [history.md](/docs/history.md)
-- write history when a task ends (commit, or topic done and built), not before compact
+- dir `histories/`, file name `<topic>-<YYYY-MM-DD_HHMM>.md`, timestamp = session start
+- one file per topic per session, updated as that topic moves on, split if session had more than one
+- write or update it when a task ends (commit, or topic done and built), not before compact
 - write it with the `write-histories` skill
-<!-- claude: history steps were repeated by hand each time; the write-histories skill holds them -->
-- file name `<topic_name>-<YY-MM-DD-TTTT>.json`
-- one file per topic, split if session had more than one
 - history is already on disk when compact or autocompact runs, so nothing is lost if compact drops it
-<!-- claude: /compact and autocompact give no turn before they run, so history written "before compact" never happened; it is now written at task end -->
+- session start: read the most recently modified file in `histories/`; older ones only by grep `<topic> <latest 2>`
+- old `.claude/history/*.json` stay as read-only archive, grep them too when `histories/` has no hit
+<!-- claude: project moved to the global my-claude-set-up conventions; history is now markdown in histories/, one file per topic per session, latest read at session start, write-histories skill writes it at task end -->
 
-- dont read history on session start, only by grep `<topic> <latest 2>`
-<!-- history: long-term record lives in .claude/history/ as topic-first json so it is pulled by prefix glob on demand, and compact can drop aggressively -->
+
+## Project files
+
+- `CLAUDE.local.md`: personal, uncommitted rules for this project; read at session start, wins over this file
+- `docs/`: lasting rules and knowledge (decisions, how-tos, specs), not only in chat
+- `docs/file-defs/<topic>/<file-name>.md`: one per source file, like a header: each function's name, input, output, what it does, where used (topic + path); start from `~/.claude/templates/file-def.md`
+- add or change functions in a file, or their callers change -> update its file-def in the same task
+- before working in an area, read its file-defs before re-reading every source file
+- source file with no file-def yet -> write it when that file is next edited
+<!-- claude: global setup adds CLAUDE.local.md and file-defs; file-defs fill in as files are touched so no bulk pass is needed -->
 
 
 ## Plan
@@ -95,7 +104,7 @@ read [plan.md](/docs/plan.md)
 ## grep
 
 read [grep.md](/docs/grep.md)
-- history search arg: `<topic> <latest 2>` -> newest 2 files in .claude/history/ with prefix `<topic>`
+- history search arg: `<topic> <latest 2>` -> newest 2 files in histories/ with prefix `<topic>`
 - code search scope: `src/` first, widen only on no hit
 - filenames first, then content with line numbers on hit files only
 - symbol search: headers (`.h` `.hpp`) before `.cpp`
@@ -108,8 +117,13 @@ read [topic.md](/docs/topic.md)
 
 - topic word comes from the list in topic.md, never invented on the spot
 - same word in history file name, edit comment, plan
-- name = `<topic>` or `<topic>_<sub>`, first word always from the list
+- name = `<topic>` or `<topic>-<sub>` in kebab-case, first word always from the list
 - nothing fits -> add a new topic to topic.md first, then use it
 - edit touches two topics -> topic of the system that owns the file
-<!-- topic: one fixed word list shared by history, comments and plan, so grep by topic finds everything; list and grouping rules live in docs/topic.md -->
+<!-- topic: names are kebab-case to match the global histories/ convention; one fixed word list shared by history, comments and plan, so grep by topic finds everything -->
 
+## gh issues/branch creation naming format
+issue create --title "<issue-index>:<short description max 50 words>"
+branch name <issue-index>
+
+ex: issueId = 10 creates branch 10

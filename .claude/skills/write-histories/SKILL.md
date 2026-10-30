@@ -1,6 +1,6 @@
 ---
 name: write-histories
-description: Write the session's history JSON files into .claude/history/, one per topic. Use when the user says "write histories" / "write history", and when a task ends (after a commit, or a topic is done and builds clean) per CLAUDE.md.
+description: Write or update the session's history notes in histories/, one markdown file per topic. Use when the user says "write histories" / "write history", and when a task ends (after a commit, or a topic is done and builds clean) per CLAUDE.md.
 ---
 
 # write-histories
@@ -9,17 +9,14 @@ Format and rules live in [docs/history.md](/docs/history.md), topic words in [do
 
 ## Steps
 
-1. **Pick topics.** List every topic this session edited since its last history file. Name each `<topic>` or `<topic>_<sub>`, first word from the docs/topic.md list (add a row there first if nothing fits). One file per topic.
-2. **Skip done ones.** `ls .claude/history/` and drop topics that already have a file written this session after their last edit. A topic changed again after its file gets a new file; never rewrite an old one.
-3. **Get the time.** `date +%y-%m-%d-%H%M` -> `YY-MM-DD-TTTT` for the name and the `date` / `time` fields.
-4. **Collect edits from the repo, not memory.** `git diff` / `git show --stat` / `grep -n` the topic's comment (`// <topic>:`) to get each edited block's current `<path>` and `ln`. `edits` lists the final state only.
-5. **Write** `.claude/history/<topic_name>-<YY-MM-DD-TTTT>.json` with the fields from docs/history.md:
-   - `topic`, `date`, `time`
-   - `prompt`: what the user asked, one line, in their words
-   - `spec`: decisions the user made and constraints (asked answers, interpretations told to the user)
-   - `edits`: `{ "path", "ln", "why" }`, `why` one line
-   - `state`: `done` | `wip` | `blocked`
-   - `next`: what is left; `open`: unanswered questions, things not checked (e.g. "not yet checked on screen by the user")
+1. **Pick topics.** List every topic this session edited. Name each `<topic>` or `<topic>-<sub>` in kebab-case, first word from the docs/topic.md list (add a row there first if nothing fits). One file per topic.
+2. **Find this session's file.** The timestamp is when the session started (`YYYY-MM-DD_HHMM`). If `histories/<topic>-<that timestamp>.md` exists, update it; otherwise create it. Never rewrite a file from an earlier session.
+3. **Get the time** if the session start is unknown: `date +%Y-%m-%d_%H%M` at the first write of the session, then reuse it for every topic.
+4. **Collect edits from the repo, not memory.** `git diff` / `git show --stat` / `grep -n` the topic's comment (`// <topic>:`) to get each edited block's current `<path>:<ln>`. `Edits` lists the final state only.
+5. **Write** `histories/<topic>-<YYYY-MM-DD_HHMM>.md` with the sections from docs/history.md:
+   - `# <topic>: <what the user asked, one line, in their words>`
+   - `- state: done | wip | blocked`
+   - `## Done`, `## Decisions` (answers the user gave, interpretations told to the user), `## Edits` (`` `path:ln` ``: why), `## Next`, `## Open` (unanswered questions, things not checked, e.g. "not yet checked on screen by the user")
    - facts only, no reasoning, no code, under 60 lines
-6. **Validate** each file: `python3 -m json.tool <file> >/dev/null`.
-7. **Report** only the written paths as markdown links. `.claude/history/` is gitignored, so nothing to commit.
+6. **Report** only the written paths as markdown links. `histories/` is gitignored, so nothing to commit.
+<!-- claude: history moved from .claude/history json to histories/ markdown per the global setup; one file per topic per session, updated in place -->

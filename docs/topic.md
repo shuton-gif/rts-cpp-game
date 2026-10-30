@@ -2,8 +2,8 @@
 
 | place | form |
 | --- | --- |
-| history file name | `<topic_name>-<YY-MM-DD-TTTT>.json` (see [history.md](/docs/history.md)) |
-| history `topic` field | `topic_name` |
+| history file name | `<topic>-<YYYY-MM-DD_HHMM>.md` (see [history.md](/docs/history.md)) |
+| history title | `# <topic>: ...` |
 | edit comment | `// topic: why; mechanism` (see [edit.md](/docs/edit.md)) |
 | plan `goal` | starts with topic |
 | history search | `<topic> <latest 2>` (see [grep.md](/docs/grep.md)) |
@@ -16,10 +16,12 @@
 
 ## Name form
 
-- `<topic>` or `<topic>_<sub>`
+- `<topic>` or `<topic>-<sub>`, kebab-case
 - `<topic>`: one word from the list
-- `<sub>`: 1-2 words, snake_case, free, narrows the topic (`netcode_lockstep`, `ui_minimap`)
+- `<sub>`: 1-2 words, kebab-case, free, narrows the topic (`netcode-lockstep`, `ui-minimap`)
 - grep by `<topic>` must hit all its subs, so topic is always the first word
+- old `.claude/history/` files use snake_case (`ui_minimap`); same topic, older form
+<!-- topic: kebab-case to match the global histories/ convention; snake_case names stay valid only in the old archive -->
 
 ## List
 
@@ -80,7 +82,7 @@
 
 ### New topic vs sub
 
-- narrows a list topic -> sub (`ui_minimap`, not `minimap`)
+- narrows a list topic -> sub (`ui-minimap`, not `minimap`)
 - new topic only if: no list topic covers it, and it will have its own files
 - add row to the list first, then use it
 - no topic named `misc`, `fix`, `refactor`, `update`: those are actions, not topics

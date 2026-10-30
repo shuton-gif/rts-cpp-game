@@ -82,4 +82,5 @@ verify: <build / test command>
 ## After plan runs
 
 - output edited `<path>: <ln>` list only
-- write history if session will compact (see [history.md](/docs/history.md))
+- write or update this session's `histories/` file when the task ends, with the `write-histories` skill (see [history.md](/docs/history.md))
+<!-- claude: history is written at task end into histories/, not before compact -->
