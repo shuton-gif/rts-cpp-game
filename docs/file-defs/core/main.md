@@ -19,7 +19,7 @@ Starts SDL, builds the scene, runs the game loop until quit, then frees everythi
 
 **Output:** `int`: 0 on normal exit, 1 (from `fail`) when an SDL call or a sprite load fails
 
-**Side effects:** Calls `SDL_Init`, creates a full-screen window and renderer with vsync and mouse grab. Sets globals `density`, `zoom`, `camera`, `mouse`, `renderView`. Loads npc, footprint, cross, arrow, grass, tree, item, plank and post textures from `assets/`. Loads scripts from `assets/scripts` (again on F5 and on editor save). Creates npcs, trees, items, agents, a `chunkStore` and a `navGrid`. Each frame it handles events (Esc, U, I, F5, Shift+1, B, Q, E, mouse buttons, wheel, pixel size change), moves the camera, streams chunks, builds paths, updates npcs, collisions, items, agents, arrows, plank drops and hp bar timers, then draws and presents. On exit destroys all textures, the renderer and the window, and calls `SDL_Quit`.
+**Side effects:** Calls `SDL_Init`, creates a full-screen window and renderer with vsync and mouse grab. Sets globals `density`, `zoom`, `camera`, `mouse`, `renderView`. Loads npc, footprint, cross, arrow, grass, tree, item, plank, post and Terminal button textures from `assets/`. Loads scripts from `assets/scripts` (again on F5 and on editor save). Creates npcs, trees, items, agents, a `chunkStore` and a `navGrid`. Each frame it handles events (Esc, U, I, F5, Shift+1, B, Q, E, mouse buttons, wheel, pixel size change), moves the camera, streams chunks, builds paths, updates npcs, collisions, items, agents, arrows, plank drops and hp bar timers, then draws and presents. On exit destroys all textures, the renderer and the window, and calls `SDL_Quit`.
 
 **Used in**
 
@@ -86,6 +86,26 @@ Converts a window point to real screen pixels.
 | `y` | `const float` | y in window points |
 
 **Output:** `Vector2D<float>`: the point times global `density`
+
+**Side effects:** none
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| core | `src/scripts/GameScene/main.cpp` | `main` |
+
+### `terminalButtonRect`
+
+Returns the Terminal button's rect: the 16 px icon at a whole `3 x density` scale, its top 25% down the screen, 12 points from the left edge.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `viewport` | `const Vector2D<float>` | viewport size in real pixels |
+
+**Output:** `SDL_FRect`: the button in real pixels
 
 **Side effects:** none
 

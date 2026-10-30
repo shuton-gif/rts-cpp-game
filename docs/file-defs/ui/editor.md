@@ -2,13 +2,13 @@
 
 - **Path:** `src/scripts/Editor/editor.h`, `src/scripts/Editor/editor.cpp`
 - **Topic:** ui
-- **Purpose:** In-game pop-up script editor (`scriptEditor`) with one tab per npc script, syntax colors, line numbers, autocomplete and save with parse check.
+- **Purpose:** In-game pop-up Terminal (`scriptEditor`), drawn as pixel art, with a tab bar of buttons (close, -, +) and one tab per npc script, numbered rows, syntax colors, autocomplete and save with parse check.
 
 ## Functions
 
 ### `colorLine`
 
-Cuts one script line into colored runs: `#` to end green, `if`/`not`/`else` pink, known calls blue, text inside `(` `)` orange, the rest white.
+Cuts one script line into colored runs: `#` to end green, `if`/`not`/`else` pink, known calls blue, text inside `(` `)` orange, the rest black.
 
 **Input**
 
@@ -51,7 +51,7 @@ Finds autocomplete matches for the `[A-Za-z0-9_-]` word before `col`. Inside an 
 
 ### `scriptEditor::open`
 
-Opens the editor. Keeps buffers of names it already had, reads `<buildDir>/<name>.txt` for new names, sorts and dedups the tabs, stays on the current tab if it still exists.
+Opens the editor. Keeps buffers of names it already had, takes the buffers of names parked by `-` from the closed lists, reads `<buildDir>/<name>.txt` for other new names, sorts and dedups the tabs, stays on the current tab if it still exists, then empties the closed lists.
 
 **Input**
 
@@ -64,7 +64,7 @@ Opens the editor. Keeps buffers of names it already had, reads `<buildDir>/<name
 
 **Output:** `void`
 
-**Side effects:** reads script files; replaces `names`, `buffers`; sets `tab`, `row`, `col` (or calls `selectTab(0)`), `window`, `sourceDir`, `buildDir`, `opened = true`; calls `SDL_StartTextInput` when `window` is set
+**Side effects:** reads script files; replaces `names`, `buffers`; empties `closedNames`, `closedBuffers`; sets `tab`, `row`, `col` (or calls `selectTab(0)`), `window`, `sourceDir`, `buildDir`, `opened = true`; calls `SDL_StartTextInput` when `window` is set
 
 **Used in**
 
@@ -74,19 +74,20 @@ Opens the editor. Keeps buffers of names it already had, reads `<buildDir>/<name
 
 ### `scriptEditor::close`
 
-Closes the editor and the autocomplete popup. Buffers are kept.
+Closes the editor, the autocomplete popup, a name being typed and any drag, and clears the hovered button and the resize cursor. Buffers and the panel's size are kept.
 
 **Input:** none
 
 **Output:** `void`
 
-**Side effects:** calls `SDL_StopTextInput` when `window` is set; sets `opened = false`, `completing = false`
+**Side effects:** calls `SDL_StopTextInput` when `window` is set; sets `opened = false`, `completing = false`, `naming = false`, `hover = none`, `dragging = none`; calls `setEdgeCursor(0)`
 
 **Used in**
 
 | Topic | File | Where |
 | --- | --- | --- |
 | ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleKey` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleMouse` |
 
 ### `scriptEditor::isOpen`
 
@@ -106,7 +107,7 @@ Tells if the editor is open.
 
 ### `scriptEditor::handleEvent`
 
-Routes one SDL event while open. Text input is inserted and reruns suggestions. Keys go to `handleKey`, mouse events to `handleMouse`.
+Routes one SDL event while open. While a name is being typed, text input goes to `typedName` (letters, digits, `_`, `-`, 32 at most). Otherwise text is inserted and reruns suggestions. Keys go to `handleKey`, mouse events to `handleMouse`.
 
 **Input**
 
@@ -117,7 +118,7 @@ Routes one SDL event while open. Text input is inserted and reruns suggestions. 
 
 **Output:** `bool`: true when the editor used the event (text, every key, mouse inside the panel); false when closed or other events
 
-**Side effects:** edits the current buffer, cursor, scroll and popup state through the helpers
+**Side effects:** edits `typedName`, or the current buffer, cursor, scroll and popup state through the helpers
 
 **Used in**
 
@@ -163,7 +164,7 @@ Tests a real-pixel point against the panel rect from the last draw.
 
 ### `scriptEditor::draw`
 
-Sets the panel to 80% of the viewport, centered (corner on a whole text pixel), draws it, then restores clip, render scale and blend mode.
+Sets `artScale` (the largest whole art scale, at least 1, that fits 128x96 art pixels inside 80% of the viewport) and `viewportSize`. Unless the panel was resized, it starts at 128x96 art pixels centered, with its corner on a whole text pixel. After a resize it keeps its rect, pulled back on screen. Then it draws the panel and restores clip, render scale and blend mode.
 
 **Input**
 
@@ -175,7 +176,7 @@ Sets the panel to 80% of the viewport, centered (corner on a whole text pixel), 
 
 **Output:** `bool`: false on any SDL failure; true when closed or drawn
 
-**Side effects:** sets `panel`; draws to the renderer; resets clip rect and restores the caller's render scale and blend mode
+**Side effects:** sets `artScale`, `viewportSize`, `panel`; draws to the renderer; resets clip rect and restores the caller's render scale and blend mode
 
 **Used in**
 
@@ -211,7 +212,7 @@ Returns the line buffer of the current tab.
 
 ### `scriptEditor::layout`
 
-Computes cell size, line height, tab row, gutter, text area, status row, visible row count and line-number digits inside the panel, in real pixels.
+Computes the art scale (`artScale`, set by `draw`), the text cell, the row height (one glyph plus half the gap a 4 art px row leaves, never under one glyph plus 2 text px), the popup row height, the status, gutter and text positions, with the text rows starting 4 art px below the band. Also computes the line count, the widest line, the line-number digits (at least 2), the text columns, which scrollbars show (two passes, since one bar takes room from the text and can make the other needed), their track and thumb rects (thumbs sized and placed from the lines or columns on screen and `scroll` or `scrollX`), and the close, minus, plus and tab rects, all in real pixels.
 
 **Input**
 
@@ -219,7 +220,7 @@ Computes cell size, line height, tab row, gutter, text area, status row, visible
 | --- | --- | --- |
 | `scale` | `float` | text render scale |
 
-**Output:** `editorLayout`: the positions and sizes
+**Output:** `editorLayout`: the positions, sizes, counts and scrollbar rects
 
 **Side effects:** none
 
@@ -231,20 +232,21 @@ Computes cell size, line height, tab row, gutter, text area, status row, visible
 | ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleMouse` |
 | ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawContents` |
 | ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleEvent` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::dragTo` |
 
 ### `scriptEditor::keepCursorVisible`
 
-Moves the scroll just enough to keep the cursor row inside the visible rows.
+Moves `scroll` and `scrollX` just enough to keep the cursor row inside the visible rows and the cursor column inside the visible columns.
 
 **Input**
 
 | Name | Type | Meaning |
 | --- | --- | --- |
-| `visible` | `int` | number of visible text rows |
+| `area` | `const editorLayout&` | layout from `layout`, for `visible` and `columns` |
 
 **Output:** `void`
 
-**Side effects:** sets `scroll`
+**Side effects:** sets `scroll` and `scrollX`
 
 **Used in**
 
@@ -255,7 +257,7 @@ Moves the scroll just enough to keep the cursor row inside the visible rows.
 
 ### `scriptEditor::selectTab`
 
-Switches to a tab (clamped) and resets cursor, scroll, error line, status and popup.
+Switches to a tab (clamped) and resets cursor, scroll, sideways scroll, error line, status and popup.
 
 **Input**
 
@@ -265,7 +267,7 @@ Switches to a tab (clamped) and resets cursor, scroll, error line, status and po
 
 **Output:** `void`
 
-**Side effects:** sets `tab`, `row = 0`, `col = 0`, `scroll = 0`, `errorLine = -1`; clears `status`; sets `completing = false`
+**Side effects:** sets `tab`, `row = 0`, `col = 0`, `scroll = 0`, `scrollX = 0`, `errorLine = -1`; clears `status`; sets `completing = false`
 
 **Used in**
 
@@ -273,6 +275,8 @@ Switches to a tab (clamped) and resets cursor, scroll, error line, status and po
 | --- | --- | --- |
 | ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleMouse` |
 | ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::open` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::closeTab` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::createScript` |
 
 ### `scriptEditor::insertText`
 
@@ -396,9 +400,57 @@ Replaces the typed word with the picked suggestion's insert text and steps the c
 | --- | --- | --- |
 | ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleKey` |
 
+### `scriptEditor::closeTab`
+
+Parks the current tab for the next open: moves its name and buffer to `closedNames` and `closedBuffers`, removes the tab, then selects the tab now in its place. Does nothing with no tabs.
+
+**Input:** none
+
+**Output:** `void`
+
+**Side effects:** moves `names[tab]` and `buffers[tab]` into the closed lists; erases them from `names`, `buffers`; calls `selectTab`
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleMouse` |
+
+### `scriptEditor::startNaming`
+
+Opens the name tab for a new script: clears the popup, the status and `typedName`, then sets `naming`.
+
+**Input:** none
+
+**Output:** `void`
+
+**Side effects:** sets `completing = false`, `naming = true`; clears `status` and `typedName`
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleMouse` |
+
+### `scriptEditor::createScript`
+
+Makes a new script named by `typedName`. Refuses an empty name, or one already open, parked or on disk (sets `status`, the name tab stays). Otherwise writes an empty `<name>.txt` to `sourceDir` and `buildDir`, appends the tab, selects it, sets `status = "created"` and `saved` so `main.cpp` loads it.
+
+**Input:** none
+
+**Output:** `void`
+
+**Side effects:** writes up to two files; on success appends to `names`, `buffers`, clears `naming`, calls `selectTab`, sets `status` and `saved`; on failure sets `status` only
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleKey` |
+
 ### `scriptEditor::drawSuggestions`
 
-Draws the autocomplete popup (up to 8 rows) under the cursor line, or above it when it would pass the text area bottom, clamped inside the panel, with the picked row highlighted.
+Draws the autocomplete list (up to 8 rows) under the cursor line, or above it when it would pass the text area bottom, clamped inside the panel: a 1 art px navy edge and a white body, with the picked row on light grey. Its rows use `popupLine`, and its x accounts for `scrollX`.
 
 **Input**
 
@@ -420,7 +472,7 @@ Draws the autocomplete popup (up to 8 rows) under the cursor line, or above it w
 
 ### `scriptEditor::handleKey`
 
-Handles a key down. Escape closes the popup, else the editor. Ctrl or Cmd+S saves, Ctrl or Cmd+Space opens the popup. Up/Down/Tab drive the popup when open. Otherwise arrows, Home/End, PageUp/PageDown move the cursor, and Backspace, Delete, Return, Tab edit.
+Handles a key down. While a name is being typed, Escape cancels it, Enter (or keypad Enter) calls `createScript`, Backspace removes the last char of the name, and every other key is ignored. Otherwise Escape closes the popup, else the editor. Ctrl or Cmd+S saves, Ctrl or Cmd+Space opens the popup. Up/Down/Tab drive the popup when open. Otherwise arrows, Home/End, PageUp/PageDown move the cursor, and Backspace, Delete, Return, Tab edit.
 
 **Input**
 
@@ -431,7 +483,7 @@ Handles a key down. Escape closes the popup, else the editor. Ctrl or Cmd+S save
 
 **Output:** `bool`: always true (every key is consumed)
 
-**Side effects:** edits the current buffer, cursor, scroll and popup state; may save files or close the editor
+**Side effects:** edits the name being typed, or the current buffer, cursor, scroll and popup state; may save files, create a script or close the editor
 
 **Used in**
 
@@ -441,7 +493,7 @@ Handles a key down. Escape closes the popup, else the editor. Ctrl or Cmd+S save
 
 ### `scriptEditor::handleMouse`
 
-Handles mouse events inside the panel. The wheel scrolls 3 rows per notch. A left click on a tab switches to it; in the text it moves the cursor to the nearest row and column and closes the popup.
+Handles mouse events. While a drag runs, every mouse event goes to it: motion moves it, and the left button's release ends it. Otherwise an edge of the panel (within 1 art px, inside or outside it) shows a resize cursor, and a left press there starts a resize. Outside the panel an event only clears the hovered button. Inside, each event records the button under the mouse (close, minus, plus) as hovered. The wheel scrolls 3 rows per notch up/down and 3 columns per notch sideways, each stopping where its content ends. A left click drops a name being typed and closes the popup. A press on a scrollbar track or thumb starts a bar drag. On the tab bar, red closes the editor, - calls `closeTab`, + calls `startNaming`, and a tab switches to it. In the text it moves the cursor to the nearest row and column, counting from `scrollX`. A left press on the dark strip, off the red button, starts moving the panel.
 
 **Input**
 
@@ -450,9 +502,9 @@ Handles mouse events inside the panel. The wheel scrolls 3 rows per notch. A lef
 | `event` | `const SDL_Event&` | mouse motion, wheel or button event |
 | `density` | `float` | pixel density of the window |
 
-**Output:** `bool`: true when the event is inside the panel, else false
+**Output:** `bool`: true when a drag runs, when the event is on a panel edge or inside the panel; false otherwise
 
-**Side effects:** sets `wheel`, `scroll`, `completing`, `row`, `col`, or switches tab
+**Side effects:** sets `hover`, `wheel`, `wheelX`, `scroll`, `scrollX`, `completing`, `naming`, `row`, `col`, `dragging`, `dragEdges`, `dragStart`, `panelStart`, `dragGrab`; sets the resize cursor through `setEdgeCursor`; calls `close`, `closeTab`, `startNaming`, `selectTab` or `dragTo`
 
 **Used in**
 
@@ -460,9 +512,113 @@ Handles mouse events inside the panel. The wheel scrolls 3 rows per notch. A lef
 | --- | --- | --- |
 | ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleEvent` |
 
+### `scriptEditor::edgesAt`
+
+Tells which panel edges a real-pixel point is on. A point counts when it is within 1 art px of the panel, inside or outside it.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `pixel` | `Vector2D<float>` | point in real pixels |
+
+**Output:** `int`: bits `edgeLeft` (1), `edgeRight` (2), `edgeTop` (4), `edgeBottom` (8) combined, or 0 when the point is off the edges
+
+**Side effects:** none
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleMouse` |
+
+### `scriptEditor::setEdgeCursor`
+
+Shows the resize cursor matching the edge bits: diagonal for a corner, horizontal or vertical for one edge, the default arrow for 0. Only acts when the bits change; keeps one system cursor per shape for the whole run.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `edges` | `int` | edge bits from `edgesAt`, 0 for none |
+
+**Output:** `void`
+
+**Side effects:** sets `cursorEdges` when it changes; calls `SDL_SetCursor` with a cached cursor
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleMouse` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::close` |
+
+### `scriptEditor::dragTo`
+
+Applies a drag to the pointer's real-pixel position. A resize moves the dragged edges from where the drag began, keeps the opposite edges and the panel between 64x40 art px and the screen, and sets `resized`. A thumb drag turns the thumb's place on its track into `scroll` (vertical) or `scrollX` (horizontal), from 0 at the track's start to the last row or column that still fills the text at its end. With all four edge bits set, it moves the panel instead, keeping its size and staying fully on screen.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `pixel` | `Vector2D<float>` | pointer position in real pixels |
+| `density` | `float` | pixel density of the window |
+
+**Output:** `void`
+
+**Side effects:** sets `panel`, `resized` (resize) or `scroll`, `scrollX` (bar drag)
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleMouse` |
+
+### `scriptEditor::drawTabBar`
+
+Draws the tab bar at render scale 1: 7 pixel grey bar, the red square with its darker center in the top strip's left corner (dim while hovered), each tab (selected: blue edge with cut corners and 3 white rows; others: grey edge with a dark right side), the - tile after the selected tab and the + glyph, both glyphs white at rest and light grey while hovered.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `renderer` | `SDL_Renderer*` | renderer |
+| `area` | `const editorLayout&` | layout from `layout` |
+
+**Output:** `bool`: false on any SDL failure, else true
+
+**Side effects:** sets the render draw color; fills rects on the renderer
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawContents` |
+
+### `scriptEditor::drawScrollbars`
+
+Draws each needed scrollbar at the art scale: a light track with a grey thumb, vertical on the right and horizontal at the bottom. When both show, the corner square where they meet is darker.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `renderer` | `SDL_Renderer*` | renderer |
+| `area` | `const editorLayout&` | layout from `layout`, with the track and thumb rects |
+
+**Output:** `bool`: false on any SDL failure, else true
+
+**Side effects:** sets the render draw color; fills rects on the renderer
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawContents` |
+
 ### `scriptEditor::drawContents`
 
-Draws the panel: blended black background, current tab box, tab names, line numbers (error row red), status, colored text clipped to the text area, the cursor bar, then the popup.
+Draws the panel at its real size, clipped to it: opaque white panel, dark strip on top, the light band under the bar, the tab bar through `drawTabBar`, and the needed scrollbars through `drawScrollbars`. Then the tab labels clipped to their tab (a name being typed shows a black caret; selected black, others #858585), 0-based `00:` line numbers in black (error row red), the white status in the strip, colored text from column `scrollX` clipped to the text area, the black cursor bar (hidden when it is left of `scrollX`, or above, below or clipped off the text area), then the popup. Clamps `scroll` and `scrollX` first.
 
 **Input**
 
@@ -473,7 +629,7 @@ Draws the panel: blended black background, current tab box, tab names, line numb
 
 **Output:** `bool`: false on any SDL failure, else true
 
-**Side effects:** clamps `scroll`; changes render scale, blend mode, draw color and clip rect; draws to the renderer
+**Side effects:** clamps `scroll` and `scrollX`; changes render scale, blend mode, draw color and clip rect; draws to the renderer
 
 **Used in**
 
@@ -501,6 +657,7 @@ Tells if a char is `[A-Za-z0-9_]`.
 | --- | --- | --- |
 | ui | `src/scripts/Editor/editor.cpp` | `colorLine` |
 | ui | `src/scripts/Editor/editor.cpp` | `suggest` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleEvent` |
 
 ### `pushToken` (static)
 
@@ -547,6 +704,7 @@ Returns the text render scale: `round(2 * density)`, at least 1.
 | ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawContents` |
 | ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleEvent` |
 | ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::draw` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::dragTo` |
 
 ### `readLines` (static)
 
@@ -593,3 +751,169 @@ Sets the draw color and draws debug text at a real-pixel position divided by `sc
 | --- | --- | --- |
 | ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawContents` |
 | ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawSuggestions` |
+
+### `lineCells` (static)
+
+Returns the width of a line's first `col` chars in cells. A space after the first word is half a cell; every other char, including indent spaces, is one cell.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `line` | `const std::string&` | the line |
+| `col` | `int` | how many chars to measure (clamped to the line) |
+
+**Output:** `float`: width in cells
+
+**Side effects:** none
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::layout` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::keepCursorVisible` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawContents` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawSuggestions` |
+
+### `colAtCells` (static)
+
+Returns the column nearest a position in cells, the inverse of `lineCells`.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `line` | `const std::string&` | the line |
+| `target` | `float` | position in cells |
+
+**Output:** `int`: the nearest column
+
+**Side effects:** none
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleMouse` |
+
+### `charCells` (static)
+
+Returns one char's width in cells: 0.5 for a space after the line's first word, else 1.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `line` | `const std::string&` | the line |
+| `at` | `std::size_t` | index of the char |
+
+**Output:** `float`: width in cells
+
+**Side effects:** none
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `lineCells` |
+| ui | `src/scripts/Editor/editor.cpp` | `colAtCells` |
+
+### `snapTo` (static)
+
+Rounds a value down to a whole multiple of `scale`, so text lands on whole text pixels.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `value` | `float` | value in real pixels |
+| `scale` | `float` | text render scale |
+
+**Output:** `float`: `floor(value / scale) * scale`
+
+**Side effects:** none
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::layout` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::draw` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawContents` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawSuggestions` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::dragTo` |
+
+### `fillArt` (static)
+
+Sets the draw color and fills a rect given in art pixels at render scale 1. Its top-left is `x`, `y` plus `pixelX`, `pixelY` times `art`, and its size is `wide` by `high` times `art`.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `renderer` | `SDL_Renderer*` | renderer |
+| `x` | `float` | panel or button x in real pixels |
+| `y` | `float` | panel or button y in real pixels |
+| `art` | `float` | art scale (real pixels per art pixel) |
+| `pixelX` | `float` | left edge in art pixels, from `x` |
+| `pixelY` | `float` | top edge in art pixels, from `y` |
+| `wide` | `float` | width in art pixels |
+| `high` | `float` | height in art pixels |
+| `color` | `SDL_Color` | fill color |
+
+**Output:** `bool`: false on SDL failure, else true
+
+**Side effects:** sets render draw color; fills a rect on the renderer
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawContents` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawTabBar` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawScrollbars` |
+
+### `inRect` (static)
+
+Tells if a real-pixel point is inside a rect. The left and top edges are inside, the right and bottom edges are outside.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `pixel` | `Vector2D<float>` | point in real pixels |
+| `box` | `const SDL_FRect&` | rect in real pixels |
+
+**Output:** `bool`: true when the point is inside `box`
+
+**Side effects:** none
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::handleMouse` |
+
+### `scriptEditor::tabLabel`
+
+Returns the name of tab `index`, or `typedName` for the tab past the last one (the name being typed).
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `index` | `std::size_t` | tab index |
+
+**Output:** `const std::string&`: the tab's name, or `typedName`
+
+**Side effects:** none
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::layout` |
+| ui | `src/scripts/Editor/editor.cpp` | `scriptEditor::drawContents` |
+
+<!-- ui-terminal: the Terminal gained scrollbars and a resizable panel; this file-def lists its tab bar, button, naming, scrollbar and resize functions -->

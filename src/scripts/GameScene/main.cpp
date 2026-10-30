@@ -239,6 +239,13 @@ static SDL_Texture* loadSprite(SDL_Renderer* renderer, const char* name)
 }
 // assets: sprites must load from any working directory and stay sharp when scaled; path is the executable folder + assets/, PNG is read by SDL3 itself and the texture uses nearest-neighbour scaling
 
+static SDL_FRect terminalButtonRect(const Vector2D<float> viewport)
+{
+    const float size = 16.0f * std::max(1.0f, std::round(3.0f * density));
+    return {std::round(12.0f * density), std::round(viewport.y * 0.25f), size, size};
+}
+// ui-terminal: the Terminal needs a button at the screen's left; the 16 px icon scales by a whole 3 x density so its pixels stay sharp, its top is 25% down the screen, and it sits 12 points from the left edge, clear of the 8 point edge scroll
+
 static SDL_Texture* loadRecolored(SDL_Renderer* renderer, const char* name, const SDL_Color from, const SDL_Color to)
 {
     const char* base = SDL_GetBasePath();
@@ -827,6 +834,14 @@ int main(int, char**)
     scriptEditor editor;
     const std::string scriptSource = std::string(RTS_SOURCE_DIR) + "/assets/scripts";
     // ui_editor: npc scripts are edited in game; the editor saves to the repo's assets/scripts (scriptSource) and the build copy (scriptDir) that the game loads
+    const auto openEditor = [&]() {
+        std::vector<std::string> names;
+        for (const auto& [name, script] : scripts) names.push_back(name);
+        editor.open(window, names, scriptSource, scriptDir);
+    };
+    SDL_Texture* terminalIcon = loadSprite(renderer, "ui/icon/terminal-icon.png");
+    if (!terminalIcon) return fail("loadSprite terminal icon");
+    // ui-terminal: Shift+1 and the new button must open the Terminal the same way; openEditor gives it one tab per loaded script, and the button's icon loads with the other sprites
     std::vector<agent> agents;
     for (const npc& unit : npcs) agents.emplace_back(unit.id);
     std::vector<item*> consumed;
@@ -869,11 +884,7 @@ int main(int, char**)
                     for (const std::string& error : loadScripts(scriptDir, scripts)) SDL_Log("script: %s", error.c_str());
                 }
                 // ai_script: scripts are edited while the game runs; F5 parses assets/scripts again into the same map, a broken file keeps its old version and its error is logged
-                if (event.key.scancode == SDL_SCANCODE_1 && (event.key.mod & SDL_KMOD_SHIFT) != 0 && !editor.isOpen()) {
-                    std::vector<std::string> names;
-                    for (const auto& [name, script] : scripts) names.push_back(name);
-                    editor.open(window, names, scriptSource, scriptDir);
-                }
+                if (event.key.scancode == SDL_SCANCODE_1 && (event.key.mod & SDL_KMOD_SHIFT) != 0 && !editor.isOpen()) openEditor();
                 // ui_editor: npc scripts are edited in game; Shift+1 (by scancode, since SDL3 keycodes follow shift) opens the editor with one tab per loaded script, and Esc inside it closes it before the game sees the key
                 if (event.key.key == SDLK_B) {
                     placing = !placing;
@@ -907,6 +918,12 @@ int main(int, char**)
                 mouse = toPixels(event.button.x, event.button.y);
                 mouseSeen = true;
                 if (event.button.button == SDL_BUTTON_LEFT) {
+                    const SDL_FRect button = terminalButtonRect(viewport);
+                    if (mouse.x >= button.x && mouse.x < button.x + button.w && mouse.y >= button.y && mouse.y < button.y + button.h) {
+                        if (!editor.isOpen()) openEditor();
+                        break;
+                    }
+                    // ui-terminal: a click on the button must open the Terminal and not select on the map; it opens it if closed, and either way the game does not see the click
                     dragStart = toMap(mouse);
                     dragging = true;
                 } else if (event.button.button == SDL_BUTTON_RIGHT) {
@@ -1412,6 +1429,9 @@ int main(int, char**)
         // render: draw order decides what covers what; background, then ground marks (footprints fading with age, cross at each moving npc's destination, white path line of each moving npc), then grass and npcs sorted by feet y, then selection arrows, drag box on top
 
         if (!SDL_SetRenderScale(renderer, 1.0f, 1.0f)) return fail("SDL_SetRenderScale");
+        const SDL_FRect terminalButton = terminalButtonRect(viewport);
+        if (!SDL_RenderTexture(renderer, terminalIcon, nullptr, &terminalButton)) return fail("SDL_RenderTexture terminal icon");
+        // ui-terminal: the button stays on screen while the map scrolls and zooms; it is drawn at scale 1 in real pixels, over the map and under the Terminal
         if (!editor.draw(renderer, viewport, density)) return fail("editor draw");
         // ui_editor: npc scripts are edited in game; the editor is drawn last over everything at scale 1 in real pixels, and the next frame sets zoom again before drawing the map
         if (!SDL_RenderPresent(renderer)) return fail("SDL_RenderPresent");
@@ -1422,6 +1442,7 @@ int main(int, char**)
         SDL_DestroyTexture(set.left);
         SDL_DestroyTexture(set.right);
     }
+    SDL_DestroyTexture(terminalIcon);
     SDL_DestroyTexture(sprites.footprint);
     SDL_DestroyTexture(sprites.cross);
     SDL_DestroyTexture(sprites.selectedArrow);

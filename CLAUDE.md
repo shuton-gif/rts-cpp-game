@@ -1,3 +1,6 @@
+@project.spec.json
+<!-- ui-terminal: issue 4's grill-me spec binds the work on it; the import loads project.spec.json into every session -->
+
 ## Default model
 Opus 5.5 (`claude-opus-5-5`)
 
