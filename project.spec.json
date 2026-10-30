@@ -6,7 +6,7 @@
   "glossary": [
     {
       "term": "View field",
-      "meaning": "The circle around an npc's feet, 1000 map px in radius, that has sight. Nothing blocks it."
+      "meaning": "The circle around an npc's feet, 500 map px in radius, that has sight. Nothing blocks it."
     },
     {
       "term": "Has sight",
@@ -39,7 +39,7 @@
       "name": "View field",
       "whatItDoes": "Gives each npc a circle of sight around its feet.",
       "details": [
-        "The radius is 1000 map px, one value that replaces the script sightRange.",
+        "The radius is 500 map px, one value that replaces the script sightRange.",
         "Trees and walls do not block it.",
         "All npcs on a team share what they see.",
         "Only npcs give sight, not walls or other objects."
@@ -185,6 +185,12 @@
     {
       "id": "D-10",
       "decision": "project.spec.json is the fog of war spec; the finished Terminal spec moved to docs/specs/terminal.spec.json.",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "D-11",
+      "decision": "Replaces D-2's radius: the view field radius is 500 map px.",
+      "reason": "The user asked for 500.",
       "date": "2026-10-30"
     }
   ],

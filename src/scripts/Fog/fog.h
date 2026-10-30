@@ -10,10 +10,10 @@
 #include "Vector2D.h"
 #include "Wall/wall.h"
 
-const float viewField = 1000.0f;
+const float viewField = 500.0f;
 const int fogCell = 10;
 const int fogBlockCells = 200;
-// fog: npcs see a plain circle and the veil has blocky edges; viewField is the circle's radius in map px, a veil cell is one tile (fogCell map px), and cells are stored in blocks of fogBlockCells a side, one chunk's worth
+// fog: npcs see a plain circle and the veil has blocky edges; viewField is the circle's radius in map px (500, so its edge shows on screen at default zoom), a veil cell is one tile (fogCell map px), and cells are stored in blocks of fogBlockCells a side, one chunk's worth
 
 enum class FogState : std::uint8_t { Unknown, Discovered, Sight };
 // fog: a spot is never discovered (solid veil), discovered without current sight (0.5 veil over the snapshot), or in sight (no veil)
