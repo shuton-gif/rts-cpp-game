@@ -1,6 +1,9 @@
 @project.spec.json
 <!-- ui-terminal: issue 4's grill-me spec binds the work on it; the import loads project.spec.json into every session -->
 
+## Checking the screen
+- `screencapture` is blocked here and SDL's offscreen driver has no OpenGL; to see a frame, run a throwaway copy of main.cpp that calls `SDL_RenderReadPixels` + `SDL_SavePNG`, with `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software`
+
 ## Default model
 Opus 5.5 (`claude-opus-5-5`)
 
