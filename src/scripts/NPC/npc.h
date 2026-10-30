@@ -1,5 +1,5 @@
 #ifndef NPC_H
-#define NPC_H
+#define NPC_H 
 
 #include <cstddef>
 #include <vector>
