@@ -8,27 +8,29 @@
 #include <vector>
 
 #include "AI/script.h"
+#include "Fog/fog.h"
 #include "Item/item.h"
 #include "NPC/npc.h"
 #include "Tree/tree.h"
 #include "Vector2D.h"
 #include "Wall/wall.h"
 
-const float sightRange = 1000.0f;
 const float buildReach = 120.0f;
-// ai_script: npcs act on what is around them, not across the map; find only looks sightRange map px from the feet, and a plan counts as beside within buildReach map px of its feet once the npc stands still
+// ai_script: a plan counts as beside within buildReach map px of its feet once the npc stands still
 
 enum class Status { Running, Done, Failed };
 // ai_script: a skill takes many frames; Running halts the script for this frame, Done goes on to the next line, Failed halts it (or is false in an if)
 
 struct Slot {
-    enum class Kind { None, Point, Item, Tree, Wall };
+    enum class Kind { None, Point, Item, Tree, Wall, Remembered };
     Kind kind = Kind::None;
     Vector2D<float> point = {0.0f, 0.0f};
     Vector2D<float> mark = {0.0f, 0.0f};
     item* thing = nullptr;
     int index = -1;
+    Seen::Kind seen = Seen::Kind::Tree;
 };
+// fog: a tree or wall known only from the snapshot may be unloaded or gone; a Remembered slot holds its seen kind and its feet in point, until the spot is in sight and run settles it
 // ai_script: skills pass what they act on by name; a slot is a ground point (point to walk to, mark to draw), an item pointer, or a tree or wall index, set by start or by find(name)
 
 struct World {
@@ -40,7 +42,9 @@ struct World {
     Vector2D<float> mapSize;
     float deltaTime;
     std::vector<item*>& consumed;
+    std::vector<fogMap>& fogs;
 };
+// fog: find searches what the npc's team knows; fogs holds one fogMap per player, indexed by the npc's player
 // ai_script: skills read and change the scene without SDL; World holds references to main's lists, the frame time, and consumed, where use puts delivered planks for main to erase after calling forget
 
 class agent
@@ -56,6 +60,10 @@ private:
     bool runBlock(const std::vector<Node>& block, World& world);
     Status call(const Node& node, World& world);
     // ai_script: the script is re-run from the top every frame; runBlock walks a block and is false once a statement is Running or Failed or the behavior stopped, and call dispatches one node to its skill
+
+    const fogMap& fog(World& world) const;
+    void settle(World& world);
+    // fog: a remembered target must turn real or gone once seen; fog is this npc's team's map, and settle runs before each frame's script, making a Remembered slot in sight a live Tree or Wall slot, or None if the snapshot no longer has it
 
     bool valid(const std::string& name, World& world) const;
     bool consumed(const item* thing, World& world) const;

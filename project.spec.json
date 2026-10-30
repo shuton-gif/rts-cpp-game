@@ -84,7 +84,8 @@
       "whatItDoes": "Lets mouse orders go anywhere, whatever the veil shows.",
       "details": [
         "Npcs can be sent into dim or solid black.",
-        "Walls can be planned in dim or solid black."
+        "Walls can be planned in dim or solid black.",
+        "Clicks hit what the screen shows: hidden things count as ground, and a tree or plan in the snapshot can be targeted."
       ]
     },
     {

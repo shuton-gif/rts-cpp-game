@@ -4,7 +4,7 @@
 - **Topic:** ai
 - **Purpose:** One agent per npc runs that npc's text script every frame, chaining skills (find, moveTo, pickup, use, build, ...) on named slots.
 
-Also declared in `agent.h`: `sightRange` (1000 map px), `buildReach` (120 map px), `enum class Status { Running, Done, Failed }`, `struct Slot` (kind None/Point/Item/Tree/Wall, point, mark, thing, index), `struct World` (references to main's npcs, items, trees, walls, rng, consumed, plus mapSize and deltaTime).
+Also declared in `agent.h`: `buildReach` (120 map px), `enum class Status { Running, Done, Failed }`, `struct Slot` (kind None/Point/Item/Tree/Wall/Remembered, point, mark, thing, index, seen), `struct World` (references to main's npcs, items, trees, walls, rng, consumed, fogs, plus mapSize and deltaTime).
 
 ## Functions
 
@@ -105,7 +105,7 @@ Plays one frame of the running script from the top.
 
 **Output:** `void`
 
-**Side effects:** none when not active or the script is not loaded. Otherwise calls `runBlock` on the script body, which runs skills that change the scene.
+**Side effects:** none when not active or the script is not loaded. Otherwise calls `settle`, then `runBlock` on the script body, which runs skills that change the scene.
 
 **Used in**
 
@@ -200,6 +200,47 @@ Dispatches one node to the skill named by `node.call`.
 | --- | --- | --- |
 | ai | `src/scripts/AI/agent.cpp` | `agent::runBlock` |
 
+### `fog`
+
+Returns the fog map of this npc's team.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `world` | `World&` | scene lists and frame data |
+
+**Output:** `const fogMap&`: `world.fogs` at this npc's player, the index clamped to the table's range.
+
+**Side effects:** none
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ai | `src/scripts/AI/agent.cpp` | `agent::settle` |
+| ai | `src/scripts/AI/agent.cpp` | `agent::find` |
+
+### `settle`
+
+Turns each Remembered slot that is in sight into a live slot.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `world` | `World&` | scene lists and frame data |
+
+**Output:** `void`
+
+**Side effects:** for each Remembered slot whose point is in `Sight` on the team fog, looks up the entry at that point with `seen`. Entry found: slot becomes Tree or Wall with its index. Entry gone: slot becomes None with index -1.
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| ai | `src/scripts/AI/agent.cpp` | `agent::run` (before each frame's script) |
+
 ### `valid`
 
 Checks that a named slot still points at something usable.
@@ -211,7 +252,7 @@ Checks that a named slot still points at something usable.
 | `name` | `const std::string&` | slot name |
 | `world` | `World&` | scene lists and frame data |
 
-**Output:** `bool`: false if the slot is missing. Point: always true. Item: not consumed, not held by another npc, fetcher -1 or this npc. Tree: index in range and not felled. Wall: index in range; slot `wall` needs built, slot `plan` needs not built and not destroyed, other names need not destroyed.
+**Output:** `bool`: false if the slot is missing. Point: always true. Remembered: always true. Item: not consumed, not held by another npc, fetcher -1 or this npc. Tree: index in range and not felled. Wall: index in range; slot `wall` needs built, slot `plan` needs not built and not destroyed, other names need not destroyed.
 
 **Side effects:** none
 
@@ -306,7 +347,7 @@ Returns a slot's ground spot.
 | `slot` | `const Slot&` | slot to resolve |
 | `world` | `World&` | scene lists and frame data |
 
-**Output:** `Vector2D<float>`: Point: `slot.point`. Item: the item's pos. Tree or wall: its collider pos.
+**Output:** `Vector2D<float>`: Point and Remembered: `slot.point`. Item: the item's pos. Tree or wall: its collider pos.
 
 **Side effects:** none
 
@@ -341,7 +382,7 @@ Checks whether the npc is at the tree or wall in a slot.
 
 ### `find`
 
-Fills a slot with the nearest matching target in sight.
+Fills a slot with the nearest matching target the team knows of.
 
 **Input**
 
@@ -350,9 +391,9 @@ Fills a slot with the nearest matching target in sight.
 | `name` | `const std::string&` | slot name and what to look for: `tree`, `plan`, `wall`, or an item kind |
 | `world` | `World&` | scene lists and frame data |
 
-**Output:** `Status`: Done if the slot is still valid or a target was found; Failed if nothing is within `sightRange` of the npc's feet.
+**Output:** `Status`: Done if the slot is still valid or a target was found; Failed if no candidate is known.
 
-**Side effects:** on Failed, erases the slot. On a find, frees the old slot item (`setFetcher(-1)` if this npc fetched it and it is not held), reserves a found item (`setFetcher(npcId)`), and writes the slot. Candidates: standing trees; unbuilt, not destroyed walls for `plan`; built walls for `wall`; else ground items of that kind, not consumed, free or fetched by this npc.
+**Side effects:** on Failed, erases the slot. On a find, frees the old slot item (`setFetcher(-1)` if this npc fetched it and it is not held), reserves a found item (`setFetcher(npcId)`), and writes the slot. Candidates, with no range limit: `tree`, `plan` and `wall` search the team snapshot (`fog(world).getSeen()`), as a live Tree or Wall slot when the spot is in sight and as a Remembered slot otherwise; the rest search items in sight, not consumed, free or fetched by this npc.
 
 **Used in**
 
@@ -393,9 +434,9 @@ Walks the npc to a slot until arrived.
 | `name` | `const std::string&` | slot name |
 | `world` | `World&` | scene lists and frame data |
 
-**Output:** `Status`: Failed if the slot is not valid (or has no object). Point: Running until the order is set and the npc stops, then Done. Item: Done when held by this npc or the npc is stopped within `arriveSlack`; else Running. Tree or wall: Done when `beside`; else Running.
+**Output:** `Status`: Failed if the slot is not valid (or has no object). Point: Running until the order is set and the npc stops, then Done. Remembered: always Running until the slot settles. Item: Done when held by this npc or the npc is stopped within `arriveSlack`; else Running. Tree or wall: Done when `beside`; else Running.
 
-**Side effects:** calls `npc::setDestinaion`. Point: to `slot.point` with `slot.mark`. Item: to the item's pos when the mark is not set or the npc stopped. Tree or wall: first to `arriveAround(world.rng, object, world.mapSize)`, then to the object's collider pos once stopped; when beside and moving, halts at the feet.
+**Side effects:** calls `npc::setDestinaion`. Point: to `slot.point` with `slot.mark`. Remembered: to `slot.point` as its own mark, once, and again only when the npc stops, so it walks to the spot's feet. Item: to the item's pos when the mark is not set or the npc stopped. Tree or wall: first to `arriveAround(world.rng, object, world.mapSize)`, then to the object's collider pos once stopped; when beside and moving, halts at the feet.
 
 **Used in**
 

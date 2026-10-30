@@ -19,7 +19,7 @@ Starts SDL, builds the scene, runs the game loop until quit, then frees everythi
 
 **Output:** `int`: 0 on normal exit, 1 (from `fail`) when an SDL call or a sprite load fails
 
-**Side effects:** Calls `SDL_Init`, creates a full-screen window and renderer with vsync and mouse grab. Sets globals `density`, `zoom`, `camera`, `mouse`, `renderView`. Loads npc, footprint, cross, arrow, grass, tree, item, plank, post and Terminal button textures from `assets/`. Loads scripts from `assets/scripts` (again on F5 and on editor save). Creates npcs, trees, items, agents, a `chunkStore` and a `navGrid`. Each frame it handles events (Esc, U, I, F5, Shift+1, B, Q, E, mouse buttons, wheel, pixel size change), moves the camera, streams chunks, builds paths, updates npcs, collisions, items, agents, arrows, plank drops and hp bar timers, then draws and presents. On exit destroys all textures, the renderer and the window, and calls `SDL_Quit`.
+**Side effects:** Calls `SDL_Init`, creates a full-screen window and renderer with vsync and mouse grab. Sets globals `density`, `zoom`, `camera`, `mouse`, `renderView`. Loads npc, footprint, cross, arrow, grass, tree, item, plank, post and Terminal button textures from `assets/`. Loads scripts from `assets/scripts` (again on F5 and on editor save). Creates npcs, trees, items, agents, a `chunkStore` and a `navGrid`. Creates one `fogMap` per player. Each frame it handles events (Esc, U, I, V, F5, Shift+1, B, Q, E, mouse buttons, wheel, pixel size change), moves the camera, streams chunks, builds paths, updates npcs, collisions, the fog maps (before the agents run), items, agents, arrows, plank drops and hp bar timers, then draws and presents. V toggles the fog veil. Drawing shows live npcs, trees, walls, items, arrows and footprints only in sight; the snapshot's trees and walls draw in discovered areas. `drawVeil` draws the veil before the drag box. Clicks only hit what the screen shows. On exit destroys all textures, the renderer and the window, and calls `SDL_Quit`.
 
 **Used in**
 
@@ -474,6 +474,28 @@ Draws the drag selection box: white fill at `selectFillAlpha`, then a solid whit
 **Output:** `bool`: false if an SDL call fails
 
 **Side effects:** Sets blend mode to `SDL_BLENDMODE_BLEND`, draw color, `SDL_RenderFillRect`, `SDL_RenderRect`.
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| core | `src/scripts/GameScene/main.cpp` | `main` |
+
+### `drawVeil`
+
+Draws the fog veil over the view: one alpha pixel per visible cell, drawn nearest-scaled over the map.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `renderer` | `SDL_Renderer*` | target renderer |
+| `veil` | `SDL_Texture*&` | veil texture, created or regrown when too small for the view |
+| `fog` | `const fogMap&` | fog map of the local player |
+
+**Output:** `bool`: false if an SDL call fails
+
+**Side effects:** Creates or regrows `veil` (ARGB8888, blend mode blend, nearest scale mode). Locks it and writes one alpha pixel per visible cell: 0 in sight, 128 discovered, 255 never discovered. Sets `veil` to a new texture when regrown, destroying the old one. Draws `veil` with `SDL_RenderTexture`, stretched over the view.
 
 **Used in**
 

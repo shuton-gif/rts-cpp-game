@@ -25,6 +25,8 @@ add_executable(rts
     src/scripts/Arrow/arrow.cpp
     src/scripts/Collision/collision.cpp
     src/scripts/Editor/editor.cpp
+    src/scripts/Fog/fog.cpp
+# fog: each team's sight, discovered cells and snapshots live in fog.cpp
     src/scripts/GameObject/gameObject.cpp
     src/scripts/GameScene/main.cpp
     src/scripts/Grass/grass.cpp

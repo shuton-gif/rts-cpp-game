@@ -13,6 +13,7 @@
 #include "Arrow/arrow.h"
 #include "Collision/collision.h"
 #include "Editor/editor.h"
+#include "Fog/fog.h"
 // ui_editor: npc scripts are edited in game; main.cpp owns one scriptEditor pop-up
 #include "GameObject/gameObject.h"
 #include "Grass/grass.h"
@@ -58,6 +59,10 @@ const float footprintGap = 24.0f;
 const float footprintLife = 1000.0f;
 
 const int playerCount = 8;
+const int localPlayer = 0;
+const Uint32 veilDiscovered = 128;
+const Uint32 veilUnknown = 255;
+// fog: the game has no teams yet, so each player is their own team and the screen shows P1's veil; never discovered cells are solid black and discovered ones 0.5 opacity
 const SDL_Color bodyColor = {0x9b, 0xad, 0xb7, 255};
 const SDL_Color playerColors[playerCount] = {
     {0xd0, 0x68, 0x68, 255},
@@ -403,6 +408,43 @@ static bool drawOutline(SDL_Renderer* renderer, SDL_FRect rect)
     return SDL_RenderRect(renderer, &rect);
 }
 // ui: the drag select area needs to be visible on the green map; a map-px rect is filled white at 0.6 opacity with alpha blending, then outlined with a solid white 1 px rectangle
+
+static bool drawVeil(SDL_Renderer* renderer, SDL_Texture*& veil, const fogMap& fog)
+{
+    const Vector2D<float> cam = cameraPx();
+    const float cell = static_cast<float>(fogCell);
+    const int firstX = static_cast<int>(std::floor(cam.x / cell));
+    const int firstY = static_cast<int>(std::floor(cam.y / cell));
+    const int cols = static_cast<int>(std::ceil((cam.x + renderView.x) / cell)) - firstX;
+    const int rows = static_cast<int>(std::ceil((cam.y + renderView.y) / cell)) - firstY;
+    float textureW = 0.0f;
+    float textureH = 0.0f;
+    if (veil && !SDL_GetTextureSize(veil, &textureW, &textureH)) return false;
+    if (!veil || textureW < static_cast<float>(cols) || textureH < static_cast<float>(rows)) {
+        if (veil) SDL_DestroyTexture(veil);
+        veil = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, cols, rows);
+        if (!veil) return false;
+        if (!SDL_SetTextureBlendMode(veil, SDL_BLENDMODE_BLEND)) return false;
+        if (!SDL_SetTextureScaleMode(veil, SDL_SCALEMODE_NEAREST)) return false;
+    }
+    const SDL_Rect area = {0, 0, cols, rows};
+    void* pixels = nullptr;
+    int pitch = 0;
+    if (!SDL_LockTexture(veil, &area, &pixels, &pitch)) return false;
+    for (int y = 0; y < rows; ++y) {
+        Uint32* line = reinterpret_cast<Uint32*>(static_cast<Uint8*>(pixels) + y * pitch);
+        for (int x = 0; x < cols; ++x) {
+            const FogState state = fog.cellState(firstX + x, firstY + y);
+            const Uint32 alpha = state == FogState::Sight ? 0 : state == FogState::Discovered ? veilDiscovered : veilUnknown;
+            line[x] = alpha << 24;
+        }
+    }
+    SDL_UnlockTexture(veil);
+    const SDL_FRect from = {0.0f, 0.0f, static_cast<float>(cols), static_cast<float>(rows)};
+    const SDL_FRect to = {static_cast<float>(firstX) * cell - cam.x, static_cast<float>(firstY) * cell - cam.y, static_cast<float>(cols) * cell, static_cast<float>(rows) * cell};
+    return SDL_RenderTexture(renderer, veil, &from, &to);
+}
+// fog: the view can hold tens of thousands of veil cells, too many for a rect each; each frame one texture pixel per visible cell gets its alpha, and the texture is drawn nearest-scaled so every cell is a hard-edged block, regrown when zooming out needs more cells
 
 static bool drawHitbox(SDL_Renderer* renderer, const Collider& oval)
 {
@@ -826,6 +868,8 @@ int main(int, char**)
     bool placing = false;
     bool showSolid = false;
     bool showChop = false;
+    bool showVeil = true;
+    SDL_Texture* veil = nullptr;
     // test: dev views, U shows every solid oval and I every chop hitbox
     // economy: walls are planned by the player and built by npcs; a segment is a horizontal wall or a vertical column of posts (see WallLook), walls keeps plans and built posts by index, npcs work on one through their agent's buildWall script, and placing is on between B and placing a row
 
@@ -861,7 +905,12 @@ int main(int, char**)
     std::vector<agent> agents;
     for (const npc& unit : npcs) agents.emplace_back(unit.id);
     std::vector<item*> consumed;
-    World world{npcs, items, trees, walls, rng, bgSize, 0.0f, consumed};
+    std::vector<fogMap> fogs;
+    for (int p = 0; p < playerCount; ++p) fogs.emplace_back(bgSize);
+    const fogMap& localFog = fogs[localPlayer];
+    auto inSight = [&](const Vector2D<float> point) { return !showVeil || localFog.state(point) == FogState::Sight; };
+    // fog: each team keeps its own sight and snapshot; inSight is whether the screen shows the live state at a point, always true while the V dev key has the veil off
+    World world{npcs, items, trees, walls, rng, bgSize, 0.0f, consumed, fogs};
     // ai_script: npc behaviors are text scripts so they change without recompiling; every .txt in assets/scripts next to the executable is parsed by name once here (errors logged), agents[id] runs npc id's behavior, and world hands the agents main's lists, the frame time and consumed, where delivered planks wait to be erased
     navGrid nav;
     std::vector<Collider> solids;
@@ -896,6 +945,8 @@ int main(int, char**)
                 if (event.key.key == SDLK_U) showSolid = !showSolid;
                 if (event.key.key == SDLK_I) showChop = !showChop;
                 // test: U and I toggle the dev hitbox views
+                if (event.key.key == SDLK_V) showVeil = !showVeil;
+                // fog: V shows the whole live map for testing; only drawing and clicks change, while sight, snapshots and find keep working
                 if (event.key.key == SDLK_F5) {
                     for (const std::string& error : loadScripts(scriptDir, scripts)) SDL_Log("script: %s", error.c_str());
                 }
@@ -957,7 +1008,7 @@ int main(int, char**)
                     const SDL_FRect point = {clicked.x, clicked.y, 0.0f, 0.0f};
                     int picked = -1;
                     for (size_t i = 0; i < items.size(); ++i) {
-                        if (items[i]->isHeld() || !overlaps(point, objectRect(*items[i]))) continue;
+                        if (items[i]->isHeld() || !inSight(items[i]->getPos()) || !overlaps(point, objectRect(*items[i]))) continue;
                         picked = static_cast<int>(i);
                         break;
                     }
@@ -976,18 +1027,30 @@ int main(int, char**)
 
                     int planned = -1;
                     for (size_t i = 0; picked < 0 && i < walls.size(); ++i) {
-                        if (walls[i].isBuilt() || walls[i].isDestroyed() || !overlaps(point, objectRect(walls[i]))) continue;
+                        if (walls[i].isBuilt() || walls[i].isDestroyed() || !inSight(walls[i].getPos()) || !overlaps(point, objectRect(walls[i]))) continue;
                         planned = static_cast<int>(i);
                         break;
                     }
                     // ai_script: right click on a wall plan gives every selected npc the buildWall script on it; any other right click order replaces it
                     int aimed = -1;
                     for (size_t i = 0; picked < 0 && planned < 0 && i < trees.size(); ++i) {
-                        if (trees[i].isFelled() || !overlaps(point, objectRect(trees[i]))) continue;
+                        if (trees[i].isFelled() || !inSight(trees[i].getPos()) || !overlaps(point, objectRect(trees[i]))) continue;
                         aimed = static_cast<int>(i);
                         break;
                     }
                     // economy: a felled tree is gone, so a right click where it stood is a ground click; with several trees the first one under the click is the target
+                    Slot remembered;
+                    for (const Seen& entry : localFog.getSeen()) {
+                        if (!showVeil || picked >= 0 || planned >= 0 || aimed >= 0) break;
+                        if (localFog.state(entry.pos) != FogState::Discovered || (entry.kind == Seen::Kind::Wall && entry.built)) continue;
+                        const SDL_FRect shown = entry.kind == Seen::Kind::Wall ? objectRect(walls[entry.index]) : SDL_FRect{entry.pos.x - treeSize.x / 2.0f, entry.pos.y - treeSize.y, treeSize.x, treeSize.y};
+                        if (!overlaps(point, shown)) continue;
+                        remembered.kind = Slot::Kind::Remembered;
+                        remembered.seen = entry.kind;
+                        remembered.point = entry.pos;
+                        break;
+                    }
+                    // fog: clicks hit what the screen shows; hidden things under the cursor count as ground, and a tree or plan shown by the snapshot becomes a remembered target
                     for (npc& unit : npcs) {
                         if (!unit.isSelected()) continue;
                         agent& brain = agents[unit.id];
@@ -1012,6 +1075,12 @@ int main(int, char**)
                             stand.kind = Slot::Kind::Tree;
                             stand.index = aimed;
                             brain.start("gatherWood", {{"target", stand}, {"tree", stand}}, world);
+                            continue;
+                        }
+                        if (remembered.kind == Slot::Kind::Remembered) {
+                            const bool plan = remembered.seen == Seen::Kind::Wall;
+                            if (plan) brain.start("buildWall", {{"target", remembered}, {"plan", remembered}}, world);
+                            else brain.start("gatherWood", {{"target", remembered}, {"tree", remembered}}, world);
                             continue;
                         }
                         const Vector2D<float> spot = selected > 1 ? fuzzyArrive(rng, clicked, bgSize, groundArriveRad) : clicked;
@@ -1047,9 +1116,9 @@ int main(int, char**)
                 // economy-wall-group: one drag splits into groups of wallGroupSize posts; releasing plans a row from the drag start toward the cursor, skipping spots that are taken without using up a group slot, starts a new group each time one fills, and ends placement
                 if (event.button.button == SDL_BUTTON_LEFT && dragging) {
                     const SDL_FRect box = boxBetween(dragStart, toMap(mouse));
-                    for (npc& unit : npcs) unit.setSelected(overlaps(box, npcRect(unit)));
+                    for (npc& unit : npcs) unit.setSelected(inSight(unit.getPos()) && overlaps(box, npcRect(unit)));
                     for (tree& stand : trees) {
-                        const bool objectHit = !stand.isFelled() && overlaps(box, objectRect(stand));
+                        const bool objectHit = !stand.isFelled() && inSight(stand.getPos()) && overlaps(box, objectRect(stand));
                         if (objectHit && !stand.isClicked()) stand.onClick();
                         stand.setClicked(objectHit);
                     }
@@ -1093,7 +1162,7 @@ int main(int, char**)
         const Vector2D<float> viewSpan = viewSize(viewport);
         std::vector<Vector2D<float>> npcFeet;
         for (const npc& unit : npcs) npcFeet.push_back(unit.getPos());
-        const std::vector<int> remap = chunks.update(viewMin, {viewMin.x + viewSpan.x, viewMin.y + viewSpan.y}, npcFeet, sightRange, trees, walls);
+        const std::vector<int> remap = chunks.update(viewMin, {viewMin.x + viewSpan.x, viewMin.y + viewSpan.y}, npcFeet, viewField, trees, walls);
         if (!remap.empty()) {
             std::vector<bool> keptDropped;
             std::vector<int> keptLastHp;
@@ -1211,6 +1280,11 @@ int main(int, char**)
         }
         // unit_item: a held item stays at its holder's side after the npcs moved; its center is half the npc width + holdGap + half the item width from the npc's center, on the right, or on the left when the npc faces left, and up or down keep the last side because isFacingLeft only changes on a left or right step
 
+        std::vector<std::vector<Vector2D<float>>> teamFeet(playerCount);
+        for (const npc& unit : npcs) teamFeet[std::clamp(unit.getPlayer(), 0, playerCount - 1)].push_back(unit.getPos());
+        for (int p = 0; p < playerCount; ++p) fogs[p].update(teamFeet[p], trees, walls);
+        // fog: scripts and drawing need this frame's sight; every team's map updates after the npcs moved and before the agents run
+
         consumed.clear();
         for (agent& brain : agents) brain.run(world, scripts);
         for (size_t i = items.size(); i-- > 0;) {
@@ -1273,6 +1347,7 @@ int main(int, char**)
         if (!drawBackground(renderer)) return fail("drawBackground");
 
         for (const Footprint& print : footprints) {
+            if (!inSight(print.pos)) continue;
             const Uint8 alpha = static_cast<Uint8>(255.0f * (1.0f - print.age / footprintLife));
             if (!drawSprite(renderer, sprites.footprint, print.pos, alpha, print.angle)) return fail("drawSprite footprint");
         }
@@ -1327,16 +1402,26 @@ int main(int, char**)
         }
         // render: grass now lives in the loaded chunks and many of their clumps are still off screen; every clump the chunk store lists is checked, and only those whose bound touches the render area (screen + renderMargin) are queued for sorting and drawing
         for (const npc& unit : npcs) {
-            if (!addDrawable(drawables, spriteFor(sprites, unit), unit.getPos(), 1.0f)) return fail("addDrawable npc");
+            if (inSight(unit.getPos()) && !addDrawable(drawables, spriteFor(sprites, unit), unit.getPos(), 1.0f)) return fail("addDrawable npc");
         }
         for (const tree& stand : trees) {
-            if (!stand.isFelled() && !addDrawable(drawables, treeSprite, stand.getPos(), treeDrawSize)) return fail("addDrawable tree");
+            if (!stand.isFelled() && inSight(stand.getPos()) && !addDrawable(drawables, treeSprite, stand.getPos(), treeDrawSize)) return fail("addDrawable tree");
         }
         for (const wall& segment : walls) {
-            if (segment.isDestroyed()) continue;
+            if (segment.isDestroyed() || !inSight(segment.getPos())) continue;
             const Uint8 alpha = segment.isBuilt() ? 255 : static_cast<Uint8>(planAlpha + (255 - planAlpha) * segment.getProgress());
             if (!addWallDrawables(drawables, look, {segment.getPos(), postOf(segment)}, alpha)) return fail("addDrawable wall");
         }
+        for (const Seen& entry : localFog.getSeen()) {
+            if (!showVeil || localFog.state(entry.pos) != FogState::Discovered) continue;
+            if (entry.kind == Seen::Kind::Tree) {
+                if (!addDrawable(drawables, treeSprite, entry.pos, treeDrawSize)) return fail("addDrawable seen tree");
+                continue;
+            }
+            const Uint8 alpha = entry.built ? 255 : static_cast<Uint8>(planAlpha + (255 - planAlpha) * entry.progress);
+            if (!addWallDrawables(drawables, look, {entry.pos, postOf(walls[entry.index])}, alpha)) return fail("addDrawable seen wall");
+        }
+        // fog: a discovered spot shows the past, not the present; live npcs, trees, walls, items, arrows and footprints only draw in sight, and the snapshot's trees and walls draw where the team has no sight
         if (placing) {
             for (const PlanSpot& spot : planLine(dragging ? dragStart : toMap(mouse), toMap(mouse), walls)) {
                 if (!canPlace(makeWall(spot, look), walls, trees)) continue;
@@ -1348,6 +1433,7 @@ int main(int, char**)
         // economy: a felled tree is gone from the map and is not drawn
         // core: the object stands on the map like npcs and grass; it joins the feet-y sorted list so a lower npc shows in front of it
         for (size_t i = 0; i < items.size(); ++i) {
+            if (!inSight(items[i]->isHeld() ? npcs[items[i]->getHolder()].getPos() : items[i]->getPos())) continue;
             const bool mirrored = items[i]->isHeld() && npcs[items[i]->getHolder()].isFacingLeft();
             float textureW = 0.0f;
             float textureH = 0.0f;
@@ -1373,6 +1459,7 @@ int main(int, char**)
             // animation: a swinging item turns outward around its handle, clockwise on the right and counter-clockwise on the left; its center is swung around the bottom pivot by the angle, then the sprite is turned by the same angle about that center
         }
         for (const arrow& shot : arrows) {
+            if (!inSight(shot.getPos())) continue;
             drawables.push_back({arrowSprite, shot.getPos(), 1.0f, shot.getFeet(), SDL_FLIP_NONE, shot.getAngle()});
         }
         // combat: an arrow sorts by the ground point under it, so it passes behind things lower on the map; it is drawn centered on its pos, turned along its flight
@@ -1407,7 +1494,7 @@ int main(int, char**)
 
         const float arrowBob = std::sin(static_cast<float>(SDL_GetTicks()) / 300.0f) * arrowBobHeight;
         for (const npc& unit : npcs) {
-            if (!unit.isSelected()) continue;
+            if (!unit.isSelected() || !inSight(unit.getPos())) continue;
 
             const SDL_FRect rect = npcRect(unit);
             const Vector2D<float> arrow = {unit.getPos().x, rect.y - arrowGap + arrowBob};
@@ -1416,7 +1503,7 @@ int main(int, char**)
         // ui: selected npcs showed a green outline; they now show selectedArrow.png centered arrowGap px above the head, bobbing up and down by arrowBobHeight on a sine of the clock
         for (size_t t = 0; t < trees.size(); ++t) {
             const tree& stand = trees[t];
-            if (stand.isFelled()) continue;
+            if (stand.isFelled() || !inSight(stand.getPos())) continue;
             if (treeHitAge[t] < hpBarShow && !drawHpBar(renderer, stand.getPos(), static_cast<float>(stand.getHp()) / static_cast<float>(stand.getMaxHp()))) return fail("drawHpBar");
             if (!stand.isClicked() && !treeTargeted[t]) continue;
             const Vector2D<float> arrow = {stand.getPos().x, objectRect(stand).y - arrowGap + arrowBob};
@@ -1425,7 +1512,7 @@ int main(int, char**)
         // combat: the tree shows its hp only for hpBarShow ms after it was last hit; the white bar is drawn over the sprites, under the arrows
         for (size_t w = 0; w < walls.size(); ++w) {
             const wall& segment = walls[w];
-            if (segment.isDestroyed()) continue;
+            if (segment.isDestroyed() || !inSight(segment.getPos())) continue;
             const float left = segment.isBuilt() ? static_cast<float>(segment.getHp()) / static_cast<float>(segment.getMaxHp()) : segment.getProgress();
             const bool showBar = segment.isGroupFirst() && (segment.isBuilt() ? wallHitAge[w] < hpBarShow : segment.hasAllPlanks());
             if (showBar && !drawHpBar(renderer, segment.getGroupMiddle(), left)) return fail("drawHpBar wall");
@@ -1440,11 +1527,13 @@ int main(int, char**)
         // economy: a wall's bar shows build progress once all planks are in, then hp once built; a wall an npc is walking to shows the arrow
         // ui: an object shows the arrow while it is clicked and while any npc is still walking to it (in place of the cross); the same bobbing arrow is drawn arrowGap px above the top of its sprite area
         for (size_t i = 0; i < items.size(); ++i) {
-            if (!itemTargeted[i]) continue;
+            if (!itemTargeted[i] || !inSight(items[i]->getPos())) continue;
             const Vector2D<float> arrow = {items[i]->getPos().x, objectRect(*items[i]).y - arrowGap + arrowBob};
             if (!drawSprite(renderer, sprites.selectedArrow, arrow, 255, 0.0, arrowSize)) return fail("drawSprite selectedArrow");
         }
         // unit_item: a ground item an npc is walking to shows the bobbing arrow above it in place of the cross
+        if (showVeil && !drawVeil(renderer, veil, localFog)) return fail("drawVeil");
+        // fog: the veil covers the whole map and everything on it, including crosses, path lines and plans; the drag box and screen UI draw after it
         if (dragging && !placing && !drawOutline(renderer, boxBetween(dragStart, toMap(mouse)))) return fail("drawOutline");
         // economy: a drag while placing draws ghost walls instead of the selection box
         // render: draw order decides what covers what; background, then ground marks (footprints fading with age, cross at each moving npc's destination, white path line of each moving npc), then grass and npcs sorted by feet y, then selection arrows, drag box on top
@@ -1463,6 +1552,7 @@ int main(int, char**)
         SDL_DestroyTexture(set.left);
         SDL_DestroyTexture(set.right);
     }
+    if (veil) SDL_DestroyTexture(veil);
     SDL_DestroyTexture(terminalIcon);
     SDL_DestroyTexture(sprites.footprint);
     SDL_DestroyTexture(sprites.cross);

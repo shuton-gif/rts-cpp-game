@@ -83,9 +83,28 @@ void agent::run(World& world, const std::map<std::string, Script>& scripts)
     if (!this->active) return;
     const auto found = scripts.find(this->script);
     if (found == scripts.end()) return;
+    this->settle(world);
     this->runBlock(found->second.body, world);
 }
-// ai_script: the behavior is re-decided every frame from the current scene; run plays the script's body from the top, and does nothing when stopped or the script is not loaded
+// ai_script: the behavior is re-decided every frame from the current scene; run settles remembered slots, plays the script's body from the top, and does nothing when stopped or the script is not loaded
+
+const fogMap& agent::fog(World& world) const
+{
+    const int last = static_cast<int>(world.fogs.size()) - 1;
+    return world.fogs[static_cast<std::size_t>(std::clamp(world.npcs[this->npcId].getPlayer(), 0, last))];
+}
+
+void agent::settle(World& world)
+{
+    const fogMap& team = this->fog(world);
+    for (auto& [name, slot] : this->slots) {
+        if (slot.kind != Slot::Kind::Remembered || team.state(slot.point) != FogState::Sight) continue;
+        const Seen* entry = team.seenAt(slot.seen, slot.point);
+        slot.kind = !entry ? Slot::Kind::None : entry->kind == Seen::Kind::Tree ? Slot::Kind::Tree : Slot::Kind::Wall;
+        slot.index = entry ? entry->index : -1;
+    }
+}
+// fog: a found object might be gone on arrival; once its spot is in sight the snapshot is current, so the slot takes the live index if the entry is still there, and otherwise goes None so valid is false and the next find picks something else
 
 bool agent::runBlock(const std::vector<Node>& block, World& world)
 {
@@ -161,10 +180,13 @@ bool agent::valid(const std::string& name, World& world) const
         if (name == "plan") return !segment.isBuilt() && !segment.isDestroyed();
         return !segment.isDestroyed();
     }
+    case Slot::Kind::Remembered:
+        return true;
     default:
         return false;
     }
 }
+// fog: out of sight the team cannot know a remembered target is gone, so a Remembered slot stays valid until settle turns it
 // ai_script: a slot goes stale as the scene changes; a point is always valid, an item while no other npc holds or fetches it, a tree while standing, slot plan while still a plan, slot wall while built, and any other wall slot until destroyed
 
 const GameObject* agent::object(const Slot& slot, World& world) const
@@ -176,11 +198,11 @@ const GameObject* agent::object(const Slot& slot, World& world) const
 
 Vector2D<float> agent::position(const Slot& slot, World& world) const
 {
-    if (slot.kind == Slot::Kind::Point) return slot.point;
+    if (slot.kind == Slot::Kind::Point || slot.kind == Slot::Kind::Remembered) return slot.point;
     if (slot.kind == Slot::Kind::Item) return slot.thing->getPos();
     return this->object(slot, world)->getCollider().pos;
 }
-// ai_script: skills walk to and aim at a slot's ground spot; a point is itself, an item its pos, and a tree or wall the center of its solid oval
+// ai_script: skills walk to and aim at a slot's ground spot; a point or remembered spot is itself, an item its pos, and a tree or wall the center of its solid oval
 
 bool agent::beside(const std::string& name, World& world) const
 {
@@ -200,36 +222,40 @@ Status agent::find(const std::string& name, World& world)
 {
     if (this->valid(name, world)) return Status::Done;
     const Vector2D<float> feet = world.npcs[this->npcId].getPos();
+    const fogMap& team = this->fog(world);
     Slot found;
     float best = 0.0f;
     auto consider = [&](const Slot& candidate, Vector2D<float> pos) {
         const float away = distance(feet, pos);
-        if (away > sightRange || (found.kind != Slot::Kind::None && away >= best)) return;
+        if (found.kind != Slot::Kind::None && away >= best) return;
         found = candidate;
         best = away;
     };
+    auto considerSeen = [&](const Seen& entry) {
+        Slot candidate;
+        if (team.state(entry.pos) == FogState::Sight) {
+            candidate.kind = entry.kind == Seen::Kind::Tree ? Slot::Kind::Tree : Slot::Kind::Wall;
+            candidate.index = entry.index;
+        } else {
+            candidate.kind = Slot::Kind::Remembered;
+            candidate.seen = entry.kind;
+            candidate.point = entry.pos;
+        }
+        consider(candidate, entry.pos);
+    };
     if (name == "tree") {
-        for (std::size_t t = 0; t < world.trees.size(); ++t) {
-            if (world.trees[t].isFelled()) continue;
-            Slot candidate;
-            candidate.kind = Slot::Kind::Tree;
-            candidate.index = static_cast<int>(t);
-            consider(candidate, world.trees[t].getCollider().pos);
+        for (const Seen& entry : team.getSeen()) {
+            if (entry.kind == Seen::Kind::Tree) considerSeen(entry);
         }
     } else if (name == "plan" || name == "wall") {
-        for (std::size_t w = 0; w < world.walls.size(); ++w) {
-            const wall& segment = world.walls[w];
-            const bool fits = name == "wall" ? segment.isBuilt() : !segment.isBuilt() && !segment.isDestroyed();
-            if (!fits) continue;
-            Slot candidate;
-            candidate.kind = Slot::Kind::Wall;
-            candidate.index = static_cast<int>(w);
-            consider(candidate, segment.getCollider().pos);
+        for (const Seen& entry : team.getSeen()) {
+            if (entry.kind == Seen::Kind::Wall && entry.built == (name == "wall")) considerSeen(entry);
         }
     } else {
         for (const std::unique_ptr<item>& thing : world.items) {
             if (thing->isHeld() || kindOf(*thing) != name || this->consumed(thing.get(), world)) continue;
             if (thing->getFetcher() != -1 && thing->getFetcher() != this->npcId) continue;
+            if (team.state(thing->getPos()) != FogState::Sight) continue;
             Slot candidate;
             candidate.kind = Slot::Kind::Item;
             candidate.thing = thing.get();
@@ -250,7 +276,8 @@ Status agent::find(const std::string& name, World& world)
     this->slots[name] = found;
     return Status::Done;
 }
-// ai_script: find keeps a still valid slot, else picks the nearest candidate within sightRange of the feet (standing tree, unbuilt plan, built wall, or a free ground item of that kind), reserves a found item and frees the old one, and fails and drops the slot when nothing is in sight
+// fog: find uses what the team knows, not a range around the npc; trees, plans and walls come from the snapshot, as live slots in sight and Remembered slots elsewhere, and ground items only from sight
+// ai_script: find keeps a still valid slot, else picks the nearest candidate (standing tree, unbuilt plan, built wall, or a free ground item of that kind), reserves a found item and frees the old one, and fails and drops the slot when the team knows of none
 
 Status agent::holding(const std::string& name, World& world)
 {
@@ -277,6 +304,12 @@ Status agent::moveTo(const std::string& name, World& world)
         }
         return unit.isMoving() ? Status::Running : Status::Done;
     }
+
+    if (slot.kind == Slot::Kind::Remembered) {
+        if (!hasMark(unit, slot.point) || !unit.isMoving()) unit.setDestinaion(slot.point, slot.point);
+        return Status::Running;
+    }
+    // fog: a remembered target has no live object to walk around yet; the npc heads for its feet, and the slot settles once the view field reaches it, well before arrival
 
     if (slot.kind == Slot::Kind::Item) {
         if (slot.thing->getHolder() == this->npcId) return Status::Done;
