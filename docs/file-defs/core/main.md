@@ -770,8 +770,9 @@ Builds a wall object from a plan spot.
 | --- | --- | --- |
 | `spot` | `const PlanSpot&` | feet and post index |
 | `look` | `const WallLook&` | post sizes |
+| `group` | `std::shared_ptr<WallGroup>` | group the post shares; default is a new one, used for ghosts |
 
-**Output:** `wall`: wall at `spot.pos` with that post's size and image name
+**Output:** `wall`: wall at `spot.pos` with that post's size, image name and group
 
 **Side effects:** none
 

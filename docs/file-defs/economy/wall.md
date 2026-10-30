@@ -2,7 +2,8 @@
 
 - **Path:** `src/scripts/Wall/wall.h`, `src/scripts/Wall/wall.cpp`
 - **Topic:** economy
-- **Purpose:** One wall post: a plan that takes planks and build time, then a solid GameObject with hp that can be damaged and destroyed.
+- **Purpose:** One wall post in a group of up to `wallGroupSize`: the group shares planks, build time and hp, and all its posts stand and disappear together.
+- **Types:** `WallGroup` holds the shared `delivered`, `progress`, `built`, `hp`, the placed `posts` count, the `first` post's feet and `feetSum`.
 
 ## Functions
 
@@ -17,8 +18,9 @@ Constructs a post plan at pos with size, and passes size.x as the GameObject rad
 | `pos` | `Vector2D<float>` | Feet position of the post on the map |
 | `size` | `Vector2D<float>` | Size of the post; `size.x` is used as the collider radius |
 | `image` | `std::string` | Sprite name, moved into the GameObject base |
+| `group` | `std::shared_ptr<WallGroup>` | Group this post shares state with |
 
-**Output:** `wall`: a new post, not built, with 0 planks delivered and full hp (`wallHp`)
+**Output:** `wall`: a new post that reads its state from `group`; it is not counted in the group until `join`
 
 **Side effects:** none beyond initializing the GameObject base
 
@@ -28,9 +30,69 @@ Constructs a post plan at pos with size, and passes size.x as the GameObject rad
 | --- | --- | --- |
 | core | `src/scripts/GameScene/main.cpp` | `makeWall` |
 
+### `join`
+
+Counts this post in its group and adds its feet to the group's sum; the first post to join becomes the group's `first`.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| (none) | | |
+
+**Output:** none
+
+**Side effects:** changes `posts`, `feetSum` and, for the first post, `first` in the group
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| core | `src/scripts/GameScene/main.cpp` | `main` (drag release) |
+
+### `isGroupFirst`
+
+Checks whether this post is the first placed in its group, which draws the group's bar.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| (none) | | |
+
+**Output:** `bool`: true when this post's feet equal the group's `first`
+
+**Side effects:** none
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| core | `src/scripts/GameScene/main.cpp` | `main` |
+
+### `getGroupMiddle`
+
+Returns the average of the feet of the group's placed posts.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| (none) | | |
+
+**Output:** `Vector2D<float>`: middle of the group, in map px
+
+**Side effects:** none
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| core | `src/scripts/GameScene/main.cpp` | `main` |
+
 ### `deliver`
 
-Adds one plank to the plan, until it has `wallCost` planks.
+Adds one plank to the plan's group, until it has `wallCost` planks.
 
 **Input**
 
@@ -40,7 +102,7 @@ Adds one plank to the plan, until it has `wallCost` planks.
 
 **Output:** `bool`: true when the plank was taken; false when the plan already has all planks (the caller keeps the plank)
 
-**Side effects:** increments `delivered` when it returns true
+**Side effects:** increments the group's `delivered` when it returns true
 
 **Used in**
 
@@ -91,7 +153,7 @@ Returns how many planks the plan has.
 
 ### `build`
 
-Adds deltaTime to the build progress, once all planks are in. Progress is capped at `wallBuildTime`.
+Adds deltaTime to the group's build progress, once all planks are in. Progress is capped at `wallBuildTime`.
 
 **Input**
 
@@ -101,7 +163,7 @@ Adds deltaTime to the build progress, once all planks are in. Progress is capped
 
 **Output:** `bool`: true on the call that reaches `wallBuildTime`; false otherwise, including when already built or planks are missing
 
-**Side effects:** changes `progress` (capped at `wallBuildTime`); sets `built` to true when it finishes
+**Side effects:** changes the group's `progress` (capped at `wallBuildTime`); sets its `built` to true when it finishes, for every post
 
 **Used in**
 
@@ -131,7 +193,7 @@ Returns build progress as a fraction.
 
 ### `damage`
 
-Takes `amount` off hp, never below 0. Only a built, standing wall takes damage.
+Takes `amount` off the group's hp, never below 0. Only a built, standing group takes damage.
 
 **Input**
 
@@ -139,9 +201,9 @@ Takes `amount` off hp, never below 0. Only a built, standing wall takes damage.
 | --- | --- | --- |
 | `amount` | `int` | Hp to remove |
 
-**Output:** `bool`: true when this hit destroys the wall; false otherwise, including when not built or already destroyed
+**Output:** `bool`: true when this hit destroys the whole group; false otherwise, including when not built or already destroyed
 
-**Side effects:** changes `hp` when the wall is built and not destroyed
+**Side effects:** changes the group's `hp` when it is built and not destroyed
 
 **Used in**
 
@@ -173,7 +235,7 @@ Returns the collider used for hits: the GameObject collider with its radius mult
 
 ### `getHp`
 
-Returns current hp.
+Returns the group's current hp.
 
 **Input**
 
@@ -181,7 +243,7 @@ Returns current hp.
 | --- | --- | --- |
 | (none) | | |
 
-**Output:** `int`: current hp
+**Output:** `int`: the group's current hp
 
 **Side effects:** none
 

@@ -427,7 +427,7 @@ static bool drawHpBar(SDL_Renderer* renderer, const Vector2D<float> feet, const 
     return SDL_RenderRect(renderer, &outline);
 }
 // economy: a tree's hp must be visible; a white bar hpBarSize map px sits hpBarGap below its feet, the 1 px outline is full hp and the white fill is hp / maxHp of it, skipped outside the render area
-// economy: walls show hp and build progress with the same bar; the caller passes the feet and the filled part (0 to 1), and a narrower width so bars of walls side by side do not cover each other
+// economy: walls show hp and build progress with the same bar; the caller passes the feet and the filled part (0 to 1)
 
 static bool drawPathLine(SDL_Renderer* renderer, const std::vector<SDL_FPoint>& points)
 {
@@ -602,10 +602,11 @@ static std::vector<PlanSpot> planLine(const Vector2D<float> from, const Vector2D
 }
 // economy: a drag plans a straight line of posts in any direction, like a pixel line; the start and end tiles snap onto nearby posts, the tiles between come from Bresenham's line so each post touches the next by a side or a corner, and posts alternate ww-single-3 and ww-single-4 from the start, continuing the alternation of the post the line starts on (that post itself is skipped later because its tile is taken)
 
-static wall makeWall(const PlanSpot& spot, const WallLook& look)
+static wall makeWall(const PlanSpot& spot, const WallLook& look, std::shared_ptr<WallGroup> group = std::make_shared<WallGroup>())
 {
-    return wall(spot.pos, look.sizes[spot.post], postImages[spot.post]);
+    return wall(spot.pos, look.sizes[spot.post], postImages[spot.post], std::move(group));
 }
+// economy-wall-group: every post belongs to a group; placement passes the line's current group, and a ghost post gets a throwaway one
 
 static SDL_FRect wallFootprint(const wall& segment)
 {
@@ -1017,14 +1018,18 @@ int main(int, char**)
             case SDL_EVENT_MOUSE_BUTTON_UP:
                 mouse = toPixels(event.button.x, event.button.y);
                 if (event.button.button == SDL_BUTTON_LEFT && dragging && placing) {
+                    std::shared_ptr<WallGroup> group = std::make_shared<WallGroup>();
                     for (const PlanSpot& spot : planLine(dragStart, toMap(mouse), walls)) {
-                        const wall candidate = makeWall(spot, look);
-                        if (canPlace(candidate, walls, trees)) walls.push_back(candidate);
+                        const wall candidate = makeWall(spot, look, group);
+                        if (!canPlace(candidate, walls, trees)) continue;
+                        walls.push_back(candidate);
+                        walls.back().join();
+                        if (group->posts == wallGroupSize) group = std::make_shared<WallGroup>();
                     }
                     placing = false;
                     dragging = false;
                 }
-                // economy: releasing the drag while placing plans a row of wall segments from the drag start toward the cursor, skipping spots that are taken, and ends placement
+                // economy-wall-group: one drag splits into groups of wallGroupSize posts; releasing plans a row from the drag start toward the cursor, skipping spots that are taken without using up a group slot, starts a new group each time one fills, and ends placement
                 if (event.button.button == SDL_BUTTON_LEFT && dragging) {
                     const SDL_FRect box = boxBetween(dragStart, toMap(mouse));
                     for (npc& unit : npcs) unit.setSelected(overlaps(box, npcRect(unit)));
@@ -1407,13 +1412,12 @@ int main(int, char**)
             const wall& segment = walls[w];
             if (segment.isDestroyed()) continue;
             const float left = segment.isBuilt() ? static_cast<float>(segment.getHp()) / static_cast<float>(segment.getMaxHp()) : segment.getProgress();
-            const float barWidth = static_cast<float>(tileRatioX) - 2.0f;
-            const bool showBar = segment.isBuilt() ? wallHitAge[w] < hpBarShow : segment.hasAllPlanks();
-            if (showBar && !drawHpBar(renderer, segment.getPos(), left, barWidth)) return fail("drawHpBar wall");
-            // combat: a built post shows its hp bar only for hpBarShow ms after it was last hit, and a plan with all planks still shows its build progress
+            const bool showBar = segment.isGroupFirst() && (segment.isBuilt() ? wallHitAge[w] < hpBarShow : segment.hasAllPlanks());
+            if (showBar && !drawHpBar(renderer, segment.getGroupMiddle(), left)) return fail("drawHpBar wall");
+            // economy-wall-group: a group has one hp, so one bar at the middle of its posts; only its first post draws it, for hpBarShow ms after a hit once built, and with all planks in as a plan to show build progress
             if (!wallTargeted[w]) continue;
             const Vector2D<float> arrow = {segment.getPos().x, objectRect(segment).y - arrowGap + arrowBob};
-            // economy: a post's bar is a tile wide minus 2 map px so bars of posts side by side stay apart, and its arrow sits above the post
+            // economy: a post's arrow sits above the post
             if (!drawSprite(renderer, sprites.selectedArrow, arrow, 255, 0.0, arrowSize)) return fail("drawSprite selectedArrow");
         }
         // economy: a wall's bar shows build progress once all planks are in, then hp once built; a wall an npc is walking to shows the arrow
