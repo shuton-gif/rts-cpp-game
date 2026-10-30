@@ -195,6 +195,14 @@ static void moveCamera(const Vector2D<float> viewport, const float deltaTime)
 }
 // camera: edge scroll like League of Legends; cursor within edgeMargin points of a window edge moves that axis by cameraSpeed * deltaTime (times density, divided by zoom, so screen speed is the same on any display and zoom), then camera is locked inside the map
 
+static void dragCamera(const Vector2D<float> viewport, const Vector2D<float> grab)
+{
+    camera.x = grab.x - mouse.x / zoom;
+    camera.y = grab.y - mouse.y / zoom;
+    clampCamera(viewport);
+}
+// camera-drag: the grabbed map point must stay under the cursor; camera = grabbed map point - cursor / zoom, the inverse of toMap, then camera is locked inside the map
+
 static float zoomLowest(const Vector2D<float> viewport)
 {
     return std::max({1.0f, std::ceil(viewport.x / bgSize.x), std::ceil(viewport.y / bgSize.y)});
@@ -885,6 +893,9 @@ int main(int, char**)
 
     bool dragging = false;
     Vector2D<float> dragStart = {0.0f, 0.0f};
+    bool viewDragging = false;
+    Vector2D<float> viewGrab = {0.0f, 0.0f};
+    // camera-drag: a view drag is separate from a box select so it keeps the selection; viewGrab is the map point pressed
     // unit: the first npc starts at the middle of the map, which is the middle of the screen because the camera starts centered; npcs sit in a vector so more can be added
 
     std::map<std::string, Script> scripts;
@@ -924,6 +935,8 @@ int main(int, char**)
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) viewDragging = false;
+            // camera-drag: a release over the Terminal must still end a view drag; the check sits before the editor can consume the event
             if (editor.isOpen() && editor.handleEvent(event, density)) {
                 if (event.type == SDL_EVENT_MOUSE_MOTION) mouse = toPixels(event.motion.x, event.motion.y);
                 continue;
@@ -991,6 +1004,12 @@ int main(int, char**)
                         break;
                     }
                     // ui-terminal: a click on the button must open the Terminal and not select on the map; it opens it if closed, and either way the game does not see the click
+                    if (!placing && (SDL_GetModState() & SDL_KMOD_SHIFT) != 0) {
+                        viewGrab = toMap(mouse);
+                        viewDragging = true;
+                        break;
+                    }
+                    // camera-drag: Shift + left press must move the view instead of selecting; it records the grabbed map point and skips the box select, while wall placement keeps its plain left drag
                     dragStart = toMap(mouse);
                     dragging = true;
                 } else if (event.button.button == SDL_BUTTON_RIGHT) {
@@ -1153,7 +1172,9 @@ int main(int, char**)
         const float deltaTime = timer.tick();
         world.deltaTime = deltaTime;
         // ai_script: skills that take time (build, use) need this frame's length; world carries it to the agents
-        if (mouseSeen) moveCamera(viewport, deltaTime);
+        if (viewDragging) dragCamera(viewport, viewGrab);
+        else if (mouseSeen) moveCamera(viewport, deltaTime);
+        // camera-drag: edge scroll must not fight a view drag; a drag places the camera from the cursor and edge scroll runs only otherwise
 
         for (Footprint& print : footprints) print.age += deltaTime;
         std::erase_if(footprints, [](const Footprint& print) { return print.age >= footprintLife; });

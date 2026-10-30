@@ -175,6 +175,7 @@ Keeps the camera inside the map for the given viewport.
 | Topic | File | Where |
 | --- | --- | --- |
 | core | `src/scripts/GameScene/main.cpp` | `moveCamera` |
+| core | `src/scripts/GameScene/main.cpp` | `dragCamera` |
 | core | `src/scripts/GameScene/main.cpp` | `zoomCamera` |
 | core | `src/scripts/GameScene/main.cpp` | `main` |
 
@@ -192,6 +193,27 @@ Edge-scrolls the camera when the cursor is within `edgeMargin` of a window edge.
 **Output:** `void`
 
 **Side effects:** Moves global `camera` by `cameraSpeed * density * deltaTime / zoom` per edge, then calls `clampCamera`. Reads global `mouse`.
+
+**Used in**
+
+| Topic | File | Where |
+| --- | --- | --- |
+| core | `src/scripts/GameScene/main.cpp` | `main` |
+
+### `dragCamera`
+
+Places the camera during a view drag so the grabbed map point stays under the cursor.
+
+**Input**
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `viewport` | `const Vector2D<float>` | window size in real pixels |
+| `grab` | `const Vector2D<float>` | map point pressed when the drag started |
+
+**Output:** `void`
+
+**Side effects:** Sets global `camera` to `grab - mouse / zoom`, then calls `clampCamera`. Reads globals `mouse` and `zoom`.
 
 **Used in**
 

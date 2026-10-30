@@ -1,211 +1,97 @@
 {
   "$schema": "./.claude/spec.schema.json",
   "status": "clear",
-  "title": "Fog of war",
-  "idea": "Npcs see a circle around them; everything else on the map is under a black veil, solid where never discovered and half see-through where discovered but out of sight (issue 6).",
+  "title": "Drag to move the view port",
+  "idea": "Holding Shift and left dragging moves the view port, whether or not an npc is selected (issue 7).",
   "glossary": [
     {
-      "term": "View field",
-      "meaning": "The circle around an npc's feet, 500 map px in radius, that has sight. Nothing blocks it."
+      "term": "View port",
+      "meaning": "The part of the map shown in the window; the existing camera."
     },
     {
-      "term": "Has sight",
-      "meaning": "Inside the view field of an npc on your team: the current state shows, with no veil."
-    },
-    {
-      "term": "Veil",
-      "meaning": "The black layer drawn over the map wherever there is no sight."
-    },
-    {
-      "term": "Never discovered",
-      "meaning": "No npc on your team has ever had sight here: the veil is solid and nothing shows."
-    },
-    {
-      "term": "Discovered",
-      "meaning": "An npc on your team had sight here before but none does now: the veil is 0.5 opacity over the snapshot."
-    },
-    {
-      "term": "Snapshot",
-      "meaning": "The ground, trees and walls of a spot as they were when the team last had sight of it. It may be out of date."
-    },
-    {
-      "term": "Team",
-      "meaning": "A player and their allies. They share sight, discovered areas and snapshots."
+      "term": "View drag",
+      "meaning": "Pressing the left mouse button with Shift held and moving the mouse until the button is released."
     }
   ],
   "features": [
     {
       "id": "F-1",
-      "name": "View field",
-      "whatItDoes": "Gives each npc a circle of sight around its feet.",
+      "name": "View drag",
+      "whatItDoes": "Moves the view port with Shift + left drag.",
       "details": [
-        "The radius is 500 map px, one value that replaces the script sightRange.",
-        "Trees and walls do not block it.",
-        "All npcs on a team share what they see.",
-        "Only npcs give sight, not walls or other objects."
-      ]
-    },
-    {
-      "id": "F-2",
-      "name": "Veil",
-      "whatItDoes": "Covers the map in black wherever the team has no sight.",
-      "details": [
-        "Solid black where never discovered, 0.5 opacity where discovered.",
-        "No veil where there is sight.",
-        "Its edges are blocky, hard-edged square cells that match the pixel art.",
-        "The screen UI, such as the Terminal button and Terminal, draws over the veil."
-      ]
-    },
-    {
-      "id": "F-3",
-      "name": "Snapshot",
-      "whatItDoes": "Keeps showing discovered areas as they looked when last seen.",
-      "details": [
-        "Under the 0.5 veil, the ground, trees and walls show as last seen, even if they have since been cut, built or destroyed.",
-        "Npcs, arrows and dropped items do not show under the 0.5 veil.",
-        "A spot's snapshot updates as soon as the team has sight of it again.",
-        "Your own wall plans, crosses and path lines follow the same veil rules, so they can be hidden."
-      ]
-    },
-    {
-      "id": "F-4",
-      "name": "Script find",
-      "whatItDoes": "Makes an npc script's find search what the team knows, instead of a range around the npc.",
-      "details": [
-        "It searches live things in sight plus the snapshot of discovered areas.",
-        "Never-discovered areas return nothing.",
-        "Things that are not in snapshots, such as dropped items, are found only in sight.",
-        "If a found thing is gone on arrival, the snapshot has already updated and the next find picks something else."
-      ]
-    },
-    {
-      "id": "F-5",
-      "name": "Orders in the veil",
-      "whatItDoes": "Lets mouse orders go anywhere, whatever the veil shows.",
-      "details": [
-        "Npcs can be sent into dim or solid black.",
-        "Walls can be planned in dim or solid black.",
-        "Clicks hit what the screen shows: hidden things count as ground, and a tree or plan in the snapshot can be targeted."
-      ]
-    },
-    {
-      "id": "F-6",
-      "name": "Dev key",
-      "whatItDoes": "A key toggles the veil off on screen for testing, like the existing dev view keys.",
-      "details": [
-        "Sight, snapshots and script find keep working the same underneath."
+        "It works whether or not npcs are selected, and the selection does not change.",
+        "The map point under the cursor at the press stays under the cursor during the drag.",
+        "The view port stops at the map's edge, like every other camera move.",
+        "Edge scroll does not move the camera during a view drag; it works as usual otherwise."
       ]
     }
   ],
   "flows": [
     {
-      "name": "Scout the map",
+      "name": "Look around while keeping a selection",
       "steps": [
-        "The game starts with sight around the team's npcs and solid black everywhere else.",
-        "Send an npc into the black; the area inside its view field clears and shows the current state.",
-        "The npc walks on; the area it left stays discovered, at 0.5 opacity, showing the snapshot.",
-        "An npc returns; the veil clears and the snapshot updates to the current state."
+        "Select some npcs, or none.",
+        "Hold Shift, press the left button on the map and move the mouse; the map follows the cursor.",
+        "Release the left button; the view port stays where it is and the selection is unchanged."
       ]
     }
   ],
   "examples": [
     {
-      "situation": "A tree was seen, the npc left, and an enemy cut the tree down.",
-      "whatHappens": "The tree still shows under the 0.5 veil. Once sight returns, it disappears."
+      "situation": "Two npcs are selected and the player Shift + left drags to the left.",
+      "whatHappens": "The map moves left with the cursor, and both npcs stay selected."
     },
     {
-      "situation": "A script's find picks a remembered tree, and the npc arrives to find it gone.",
-      "whatHappens": "The snapshot updates as the spot comes into sight, so the next find picks something else."
+      "situation": "A view drag reaches the map's edge.",
+      "whatHappens": "The view port stops at the edge while the cursor keeps moving."
     },
     {
-      "situation": "An enemy npc walks through a discovered area with no sight on it.",
-      "whatHappens": "It does not show. Only the snapshot shows, under the 0.5 veil."
-    },
-    {
-      "situation": "A wall is planned in solid black.",
-      "whatHappens": "The plan is made but does not show, and script find does not see it until an npc on the team has sight of it."
-    },
-    {
-      "situation": "The only npc in an area dies.",
-      "whatHappens": "That area goes straight to discovered, at 0.5 opacity, with its snapshot."
+      "situation": "The cursor reaches the window's edge during a view drag.",
+      "whatHappens": "The camera does not edge scroll; it moves only by the drag."
     }
   ],
   "leftOut": [
-    "Sight blocked by trees or walls.",
-    "Sight from walls or other objects.",
-    "A minimap."
+    "A separate drag mode toggled by a key."
   ],
   "decisions": [
     {
       "id": "D-1",
-      "decision": "A team's npcs, the player's and allies', share sight, discovered areas and snapshots.",
+      "decision": "The view port moves with Shift + left drag, with or without a selection; there is no drag mode.",
+      "reason": "The user first asked for a G toggle, then replaced it with Shift + left click.",
       "date": "2026-10-30"
     },
     {
       "id": "D-2",
-      "decision": "The view field and script find share one setting: the view field radius is 1000 map px, and find no longer has a range limit.",
+      "decision": "The map point grabbed stays under the cursor.",
       "date": "2026-10-30"
     },
     {
       "id": "D-3",
-      "decision": "Script find searches sight plus the discovered snapshot, so a found object might be gone on arrival; the next find then picks something else.",
-      "reason": "The user said a discovered area is only a snapshot of that moment.",
+      "decision": "Edge scroll stays in the game but is off during a view drag.",
+      "reason": "The user chose to turn edge scroll off only while dragging.",
       "date": "2026-10-30"
     },
     {
       "id": "D-4",
-      "decision": "Under the 0.5 veil, ground, trees and walls show as last seen; npcs, arrows and items do not show.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-5",
-      "decision": "The veil's edges are blocky square cells with hard edges.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-6",
-      "decision": "Mouse orders, walking and wall plans alike, can go anywhere, including into solid black.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-7",
-      "decision": "Sight is a plain circle; trees and walls do not block it.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-8",
-      "decision": "Your own wall plans, crosses and path lines follow the veil rules, and are not drawn over it.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-9",
-      "decision": "A dev key toggles the veil off on screen; sight and find keep working underneath.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-10",
-      "decision": "project.spec.json is the fog of war spec; the finished Terminal spec moved to docs/specs/terminal.spec.json.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-11",
-      "decision": "Replaces D-2's radius: the view field radius is 500 map px.",
-      "reason": "The user asked for 500.",
+      "decision": "project.spec.json is the view drag spec; the finished fog of war spec moved to docs/specs/fog-of-war.spec.json.",
       "date": "2026-10-30"
     }
   ],
   "assumptions": [
     {
-      "statement": "The game has no teams yet, only a player index, so the screen shows P1's veil and each player is their own team until allies exist."
+      "statement": "Shift only matters at the press: releasing it during a view drag does not end the drag, and pressing it during a box select does not start one."
     },
     {
-      "statement": "A veil cell is one tile, 10 map px."
+      "statement": "A Shift + left press does not select anything, even if the mouse does not move."
     },
     {
-      "statement": "The dev key is V, which is unused today."
+      "statement": "A plain left click and left drag still select, and Shift + right click still queues a destination."
     },
     {
-      "statement": "Other players' scripts use their own team's knowledge through the same find rules."
+      "statement": "While placing walls, a left drag plans walls even with Shift held."
+    },
+    {
+      "statement": "A Shift + left press on the Terminal button still opens the Terminal."
     }
   ],
   "openQuestions": []
