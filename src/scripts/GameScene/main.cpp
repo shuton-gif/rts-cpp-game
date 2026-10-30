@@ -46,13 +46,13 @@ struct IntervalTimer {
 // core: camera speed must not depend on frame rate; tick() returns ms since the previous call from the ns clock and resets
 
 const Vector2D<float> bgSize = {40000.0f, 40000.0f};
-const float edgeMargin = 8.0f;
 
 Vector2D<float> camera = {0.0f, 0.0f};
-float cameraSpeed = 1.0f;
 
 Vector2D<float> mouse = {0.0f, 0.0f};
-// camera: sketch values made real; camera is the top-left of the view in map px, cameraSpeed is px per ms (1.0 = 1000 px/s)
+// camera: sketch values made real; camera is the top-left of the view in map px
+const int cursorScale = 1;
+// ui-cursor: 1.125 points per art px drew art pixels at uneven sizes; the nearest whole scale is 1, so 16 px art draws as 16 points
 
 const float spriteScale = 4.0f;
 const float footprintGap = 24.0f;
@@ -153,7 +153,9 @@ float density = 1.0f;
 float zoom = 1.0f;
 float wheelTotal = 0.0f;
 const float zoomMaxPerDensity = 4.0f;
-// render: sprites were blurry because the window drew at half resolution and zoom was fractional; density is real screen pixels per window point (2 on Retina), and zoom is a whole number of real screen pixels per map px, so every sprite pixel covers whole screen pixels
+const float zoomStep = 0.25f;
+// render: sprites were blurry because the window drew at half resolution; density is real screen pixels per window point (2 on Retina), and sprites use nearest-neighbour scaling so a fractional zoom stays crisp
+// camera-zoom: whole steps zoomed too fast; each wheel notch now moves zoom by zoomStep real screen pixels per map px
 
 static Vector2D<float> toPixels(const float x, const float y)
 {
@@ -181,27 +183,13 @@ static void clampCamera(const Vector2D<float> viewport)
     camera.y = std::clamp(camera.y, 0.0f, std::max(0.0f, bgSize.y - view.y));
 }
 
-static void moveCamera(const Vector2D<float> viewport, const float deltaTime)
-{
-    const float step = cameraSpeed * density * deltaTime / zoom;
-    const float margin = edgeMargin * density;
-
-    if (mouse.x <= margin) camera.x -= step;
-    if (mouse.x >= viewport.x - 1.0f - margin) camera.x += step;
-    if (mouse.y <= margin) camera.y -= step;
-    if (mouse.y >= viewport.y - 1.0f - margin) camera.y += step;
-
-    clampCamera(viewport);
-}
-// camera: edge scroll like League of Legends; cursor within edgeMargin points of a window edge moves that axis by cameraSpeed * deltaTime (times density, divided by zoom, so screen speed is the same on any display and zoom), then camera is locked inside the map
-
 static void dragCamera(const Vector2D<float> viewport, const Vector2D<float> grab)
 {
     camera.x = grab.x - mouse.x / zoom;
     camera.y = grab.y - mouse.y / zoom;
     clampCamera(viewport);
 }
-// camera-drag: the grabbed map point must stay under the cursor; camera = grabbed map point - cursor / zoom, the inverse of toMap, then camera is locked inside the map
+// camera-drag: the grabbed map point must stay under the cursor and edge scroll is gone, so a view drag and zoom are the only camera moves; camera = grabbed map point - cursor / zoom, the inverse of toMap, then camera is locked inside the map
 
 static float zoomLowest(const Vector2D<float> viewport)
 {
@@ -216,13 +204,13 @@ static void zoomCamera(const Vector2D<float> viewport, const Vector2D<float> cur
     if (levels == 0.0f) return;
 
     const float before = zoom;
-    zoom = std::clamp(zoom + levels, zoomLowest(viewport), std::max(zoomLowest(viewport), zoomMaxPerDensity * density));
+    zoom = std::clamp(zoom + levels * zoomStep, zoomLowest(viewport), std::max(zoomLowest(viewport), zoomMaxPerDensity * density));
 
     camera.x += cursor.x / before - cursor.x / zoom;
     camera.y += cursor.y / before - cursor.y / zoom;
     clampCamera(viewport);
 }
-// camera: mouse scroll zooms in and out in whole steps so pixels stay sharp; wheel movement is added up and each full notch moves zoom by 1, between 1 (or more, so the view is never bigger than the map) and 4 x density, and the camera shifts so the map point under the cursor stays under it
+// camera-zoom: whole steps zoomed too fast; wheel movement is added up and each full notch moves zoom by zoomStep, between 1 (or more, so the view is never bigger than the map) and 4 x density, and the camera shifts so the map point under the cursor stays under it
 
 static bool drawBackground(SDL_Renderer* renderer)
 {
@@ -254,12 +242,32 @@ static SDL_Texture* loadSprite(SDL_Renderer* renderer, const char* name)
 }
 // assets: sprites must load from any working directory and stay sharp when scaled; path is the executable folder + assets/, PNG is read by SDL3 itself and the texture uses nearest-neighbour scaling
 
+static SDL_Cursor* loadCursor(const char* name, const int hotX, const int hotY)
+{
+    const char* base = SDL_GetBasePath();
+    const std::string path = std::string(base ? base : "") + "assets/" + name;
+
+    SDL_Surface* art = SDL_LoadPNG(path.c_str());
+    if (!art) return nullptr;
+    SDL_Surface* surface = SDL_ScaleSurface(art, art->w * cursorScale, art->h * cursorScale, SDL_SCALEMODE_NEAREST);
+    SDL_Surface* sharp = SDL_ScaleSurface(art, art->w * cursorScale * 2, art->h * cursorScale * 2, SDL_SCALEMODE_NEAREST);
+    SDL_DestroySurface(art);
+    if (surface && sharp) SDL_AddSurfaceAlternateImage(surface, sharp);
+    SDL_DestroySurface(sharp);
+    if (!surface) return nullptr;
+
+    SDL_Cursor* cursor = SDL_CreateColorCursor(surface, hotX * cursorScale, hotY * cursorScale);
+    SDL_DestroySurface(surface);
+    return cursor;
+}
+// ui-cursor: the mouse pointer must be pixel art at a readable size; the PNG scales by a whole cursorScale with nearest-neighbour, a double-size copy keeps it sharp on high density displays, and the hot spot given in art px scales with it
+
 static SDL_FRect terminalButtonRect(const Vector2D<float> viewport)
 {
     const float size = 16.0f * std::max(1.0f, std::round(3.0f * density));
     return {std::round(12.0f * density), std::round(viewport.y * 0.25f), size, size};
 }
-// ui-terminal: the Terminal needs a button at the screen's left; the 16 px icon scales by a whole 3 x density so its pixels stay sharp, its top is 25% down the screen, and it sits 12 points from the left edge, clear of the 8 point edge scroll
+// ui-terminal: the Terminal needs a button at the screen's left; the 16 px icon scales by a whole 3 x density so its pixels stay sharp, its top is 25% down the screen, and it sits 12 points from the left edge
 
 static SDL_Texture* loadRecolored(SDL_Renderer* renderer, const char* name, const SDL_Color from, const SDL_Color to)
 {
@@ -912,6 +920,12 @@ int main(int, char**)
     };
     SDL_Texture* terminalIcon = loadSprite(renderer, "ui/icon/terminal-icon.png");
     if (!terminalIcon) return fail("loadSprite terminal icon");
+    SDL_Cursor* grabOpenCursor = loadCursor("ui/cursor/grab-open.png", 8, 8);
+    SDL_Cursor* grabCloseCursor = loadCursor("ui/cursor/grab-close.png", 7, 5);
+    SDL_Cursor* pointCursor = loadCursor("ui/cursor/point.png", 5, 0);
+    if (!grabOpenCursor || !grabCloseCursor || !pointCursor) return fail("loadCursor");
+    bool cursorOnPanel = false;
+    // ui-cursor: the pointer shows what a click will do; the hands' hot spots are their middles and the pointing hand's is its fingertip, and cursorOnPanel is whether the Terminal took the last mouse motion
     // ui-terminal: Shift+1 and the new button must open the Terminal the same way; openEditor gives it one tab per loaded script, and the button's icon loads with the other sprites
     std::vector<agent> agents;
     for (const npc& unit : npcs) agents.emplace_back(unit.id);
@@ -929,7 +943,6 @@ int main(int, char**)
     // pathfinding: the grid must follow trees being felled and walls being built; solids holds this frame's standing trees and built walls, and solidCount is how many the grid was last built from, SIZE_MAX so the first frame builds it
 
     IntervalTimer timer;
-    bool mouseSeen = false;
     bool running = true;
 
     while (running) {
@@ -937,11 +950,15 @@ int main(int, char**)
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) viewDragging = false;
             // camera-drag: a release over the Terminal must still end a view drag; the check sits before the editor can consume the event
+            if (event.type == SDL_EVENT_MOUSE_MOTION) cursorOnPanel = false;
             if (editor.isOpen() && editor.handleEvent(event, density)) {
-                if (event.type == SDL_EVENT_MOUSE_MOTION) mouse = toPixels(event.motion.x, event.motion.y);
+                if (event.type == SDL_EVENT_MOUSE_MOTION) {
+                    mouse = toPixels(event.motion.x, event.motion.y);
+                    cursorOnPanel = true;
+                }
                 continue;
             }
-            // ui_editor: npc scripts are edited in game; while open the editor takes every key, text input and mouse event inside its panel and the game skips them, quit and window events always reach the game, and a consumed motion still moves the cursor used by edge scroll
+            // ui_editor: npc scripts are edited in game; while open the editor takes every key, text input and mouse event inside its panel and the game skips them, quit and window events always reach the game, and a consumed motion still moves the cursor used by a view drag
             switch (event.type) {
             case SDL_EVENT_QUIT:
                 running = false;
@@ -992,11 +1009,9 @@ int main(int, char**)
                 break;
             case SDL_EVENT_MOUSE_MOTION:
                 mouse = toPixels(event.motion.x, event.motion.y);
-                mouseSeen = true;
                 break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
                 mouse = toPixels(event.button.x, event.button.y);
-                mouseSeen = true;
                 if (event.button.button == SDL_BUTTON_LEFT) {
                     const SDL_FRect button = terminalButtonRect(viewport);
                     if (mouse.x >= button.x && mouse.x < button.x + button.w && mouse.y >= button.y && mouse.y < button.y + button.h) {
@@ -1163,7 +1178,7 @@ int main(int, char**)
                 break;
             }
         }
-        // input: full screen has no close button and the cursor is 0,0 until it moves; Esc quits and edge scroll waits for the first mouse motion
+        // input: full screen has no close button; Esc quits
         if (editor.takeSaved()) {
             for (const std::string& error : loadScripts(scriptDir, scripts)) SDL_Log("script: %s", error.c_str());
         }
@@ -1173,8 +1188,26 @@ int main(int, char**)
         world.deltaTime = deltaTime;
         // ai_script: skills that take time (build, use) need this frame's length; world carries it to the agents
         if (viewDragging) dragCamera(viewport, viewGrab);
-        else if (mouseSeen) moveCamera(viewport, deltaTime);
-        // camera-drag: edge scroll must not fight a view drag; a drag places the camera from the cursor and edge scroll runs only otherwise
+        // camera-drag: the camera must follow the cursor only during a view drag; each frame of a drag places it from the cursor, so zooming mid-drag stays correct too
+
+        SDL_Cursor* wantedCursor = grabOpenCursor;
+        if (viewDragging) {
+            wantedCursor = grabCloseCursor;
+        } else if (dragging && !placing) {
+            wantedCursor = pointCursor;
+        } else if (cursorOnPanel && editor.isOpen()) {
+            wantedCursor = nullptr;
+        } else {
+            const Vector2D<float> hovered = toMap(mouse);
+            const SDL_FRect point = {hovered.x, hovered.y, 0.0f, 0.0f};
+            for (const npc& unit : npcs) {
+                if (!inSight(unit.getPos()) || !overlaps(point, npcRect(unit))) continue;
+                wantedCursor = pointCursor;
+                break;
+            }
+        }
+        if (wantedCursor && SDL_GetCursor() != wantedCursor) SDL_SetCursor(wantedCursor);
+        // ui-cursor: the pointer shows what a click will do; a view drag shows the closed hand, a box select or a visible npc under the cursor shows the pointing hand and anything else the open hand, while over the Terminal the cursor is left alone so its resize cursors keep working
 
         for (Footprint& print : footprints) print.age += deltaTime;
         std::erase_if(footprints, [](const Footprint& print) { return print.age >= footprintLife; });
@@ -1575,6 +1608,9 @@ int main(int, char**)
     }
     if (veil) SDL_DestroyTexture(veil);
     SDL_DestroyTexture(terminalIcon);
+    SDL_DestroyCursor(grabOpenCursor);
+    SDL_DestroyCursor(grabCloseCursor);
+    SDL_DestroyCursor(pointCursor);
     SDL_DestroyTexture(sprites.footprint);
     SDL_DestroyTexture(sprites.cross);
     SDL_DestroyTexture(sprites.selectedArrow);

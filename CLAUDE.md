@@ -3,6 +3,7 @@
 
 ## Checking the screen
 - `screencapture` is blocked here and SDL's offscreen driver has no OpenGL; to see a frame, run a throwaway copy of main.cpp that calls `SDL_RenderReadPixels` + `SDL_SavePNG`, with `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software`
+- to test input without a mouse, that copy can `SDL_PushEvent` at set frames and `SDL_Log` state; compile it with main.cpp's command from `build/compile_commands.json`, link with `build/CMakeFiles/rts.dir/link.txt` (run from `build/`) using its `.o` instead of main's, and symlink `build/assets` beside the binary
 
 ## Default model
 Opus 5.5 (`claude-opus-5-5`)

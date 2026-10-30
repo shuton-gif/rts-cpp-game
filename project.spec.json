@@ -22,7 +22,26 @@
         "It works whether or not npcs are selected, and the selection does not change.",
         "The map point under the cursor at the press stays under the cursor during the drag.",
         "The view port stops at the map's edge, like every other camera move.",
-        "Edge scroll does not move the camera during a view drag; it works as usual otherwise."
+        "Moving the cursor to the window's edge no longer moves the camera, during a drag or at any other time."
+      ]
+    },
+    {
+      "id": "F-3",
+      "name": "Zoom steps",
+      "whatItDoes": "Makes each wheel notch change the zoom by a smaller amount.",
+      "details": [
+        "One notch moves zoom by 0.25 instead of 1.",
+        "The lowest and highest zoom stay the same, and the map point under the cursor stays under it."
+      ]
+    },
+    {
+      "id": "F-2",
+      "name": "Mouse cursor",
+      "whatItDoes": "Shows pixel-art cursors from assets/ui/cursor instead of the system cursor.",
+      "details": [
+        "grab-open is the default.",
+        "grab-close shows during a view drag.",
+        "point shows during a box select, and over an npc that is on screen and not hidden by the veil, except during a view drag."
       ]
     }
   ],
@@ -46,12 +65,13 @@
       "whatHappens": "The view port stops at the edge while the cursor keeps moving."
     },
     {
-      "situation": "The cursor reaches the window's edge during a view drag.",
-      "whatHappens": "The camera does not edge scroll; it moves only by the drag."
+      "situation": "The cursor rests at the window's edge.",
+      "whatHappens": "The camera does not move."
     }
   ],
   "leftOut": [
-    "A separate drag mode toggled by a key."
+    "A separate drag mode toggled by a key.",
+    "Edge scroll."
   ],
   "decisions": [
     {
@@ -75,6 +95,23 @@
       "id": "D-4",
       "decision": "project.spec.json is the view drag spec; the finished fog of war spec moved to docs/specs/fog-of-war.spec.json.",
       "date": "2026-10-30"
+    },
+    {
+      "id": "D-5",
+      "decision": "Replaces D-3: edge scroll is removed from the game; the camera moves only by a view drag and zoom.",
+      "reason": "The user asked to take it out.",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "D-7",
+      "decision": "Zoom uses smaller steps, so it can be fractional instead of a whole number of screen pixels per map px.",
+      "reason": "The user said zooming was too fast.",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "D-6",
+      "decision": "The cursor is grab-open by default, grab-close on Shift + left, and point over an npc or during a box select.",
+      "date": "2026-10-30"
     }
   ],
   "assumptions": [
@@ -92,6 +129,18 @@
     },
     {
       "statement": "A Shift + left press on the Terminal button still opens the Terminal."
+    },
+    {
+      "statement": "The user shrank the cursor and asked for the nearest whole scale: each cursor art px draws as 1 point, so a 16 px cursor is 16 points."
+    },
+    {
+      "statement": "Any visible npc shows point, including enemies."
+    },
+    {
+      "statement": "A smaller zoom step means 0.25 per wheel notch."
+    },
+    {
+      "statement": "Over the open Terminal the cursor is left to the Terminal, so its resize cursors keep working."
     }
   ],
   "openQuestions": []

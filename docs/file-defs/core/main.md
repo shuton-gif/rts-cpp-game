@@ -174,25 +174,23 @@ Keeps the camera inside the map for the given viewport.
 
 | Topic | File | Where |
 | --- | --- | --- |
-| core | `src/scripts/GameScene/main.cpp` | `moveCamera` |
 | core | `src/scripts/GameScene/main.cpp` | `dragCamera` |
 | core | `src/scripts/GameScene/main.cpp` | `zoomCamera` |
 | core | `src/scripts/GameScene/main.cpp` | `main` |
 
-### `moveCamera`
+### `loadCursor`
 
-Edge-scrolls the camera when the cursor is within `edgeMargin` of a window edge.
+Loads a cursor PNG from `assets/` and makes a pixel-art mouse cursor, scaled by `cursorScale` with a double-size copy for high density displays.
 
 **Input**
 
 | Name | Type | Meaning |
 | --- | --- | --- |
-| `viewport` | `const Vector2D<float>` | window size in real pixels |
-| `deltaTime` | `const float` | frame time in ms |
+| `name` | `const char*` | path under `assets/` |
+| `hotX` | `const int` | click point x in art px |
+| `hotY` | `const int` | click point y in art px |
 
-**Output:** `void`
-
-**Side effects:** Moves global `camera` by `cameraSpeed * density * deltaTime / zoom` per edge, then calls `clampCamera`. Reads global `mouse`.
+**Output:** `SDL_Cursor*`, or `nullptr` on failure
 
 **Used in**
 
@@ -244,7 +242,7 @@ Returns the smallest whole zoom so the view is never bigger than the map.
 
 ### `zoomCamera`
 
-Changes zoom by whole wheel notches and keeps the map point under the cursor fixed.
+Changes zoom by `zoomStep` per whole wheel notch and keeps the map point under the cursor fixed.
 
 **Input**
 
@@ -256,7 +254,7 @@ Changes zoom by whole wheel notches and keeps the map point under the cursor fix
 
 **Output:** `void`
 
-**Side effects:** Adds to global `wheelTotal`. On a full notch, sets global `zoom` (clamped between `zoomLowest` and `zoomMaxPerDensity * density`), shifts global `camera`, and calls `clampCamera`.
+**Side effects:** Adds to global `wheelTotal`. On a full notch, moves global `zoom` by `zoomStep` per notch (clamped between `zoomLowest` and `zoomMaxPerDensity * density`), shifts global `camera`, and calls `clampCamera`.
 
 **Used in**
 
