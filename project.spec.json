@@ -1,333 +1,204 @@
 {
   "$schema": "./.claude/spec.schema.json",
   "status": "clear",
-  "title": "Terminal",
-  "idea": "Give the in-game script editor a new pixel-art Terminal look that follows assets/ui/terminal/terminal-ref.aseprite (issue 4).",
+  "title": "Fog of war",
+  "idea": "Npcs see a circle around them; everything else on the map is under a black veil, solid where never discovered and half see-through where discovered but out of sight (issue 6).",
   "glossary": [
     {
-      "term": "Terminal",
-      "meaning": "The in-game script editor with its new look; it edits the same npc scripts as today."
+      "term": "View field",
+      "meaning": "The circle around an npc's feet, 1000 map px in radius, that has sight. Nothing blocks it."
     },
     {
-      "term": "Reference",
-      "meaning": "assets/ui/terminal/terminal-ref.aseprite: the panel mock-up on the left and a parts sheet on the right."
+      "term": "Has sight",
+      "meaning": "Inside the view field of an npc on your team: the current state shows, with no veil."
     },
     {
-      "term": "Top strip",
-      "meaning": "The dark bar along the top of the panel, above the tab bar, with the red button in its left corner."
+      "term": "Veil",
+      "meaning": "The black layer drawn over the map wherever there is no sight."
     },
     {
-      "term": "Tab bar",
-      "meaning": "The grey row under the top strip holding the tabs, the - button and the + button, with a light band under it."
+      "term": "Never discovered",
+      "meaning": "No npc on your team has ever had sight here: the veil is solid and nothing shows."
     },
     {
-      "term": "Row",
-      "meaning": "One numbered line of the script area (00:, 01:), one glyph tall plus half the gap a 4 reference pixel row leaves, with nothing drawn between rows."
+      "term": "Discovered",
+      "meaning": "An npc on your team had sight here before but none does now: the veil is 0.5 opacity over the snapshot."
     },
     {
-      "term": "Original font",
-      "meaning": "The SDL debug font the editor on main draws with today."
+      "term": "Snapshot",
+      "meaning": "The ground, trees and walls of a spot as they were when the team last had sight of it. It may be out of date."
     },
     {
-      "term": "Scrollbar",
-      "meaning": "A 3 pixel light track along the right or bottom edge of the script area, with a 1 pixel grey thumb; shown only when the content overflows."
+      "term": "Team",
+      "meaning": "A player and their allies. They share sight, discovered areas and snapshots."
     }
   ],
   "features": [
     {
       "id": "F-1",
-      "name": "Panel",
-      "whatItDoes": "Draws the Terminal frame: top strip, tab bar, light band and white script area.",
+      "name": "View field",
+      "whatItDoes": "Gives each npc a circle of sight around its feet.",
       "details": [
-        "Saved and parse error messages show in the top strip, as light text.",
-        "Uses the largest whole-number scale that fits inside 80% of the window, centered.",
-        "With no tabs open, shows blank rows with only the red and + buttons; typing does nothing.",
-        "Starts at 128x96 reference pixels, and any edge or corner can be dragged to resize it, between 64x40 reference pixels and the screen; the size is kept across close and open.",
-        "Dragging the dark top strip moves the panel, which stays fully on screen; its place is kept across close and open."
+        "The radius is 1000 map px, one value that replaces the script sightRange.",
+        "Trees and walls do not block it.",
+        "All npcs on a team share what they see.",
+        "Only npcs give sight, not walls or other objects."
       ]
     },
     {
       "id": "F-2",
-      "name": "Tabs",
-      "whatItDoes": "One tab per npc script, with a distinct active and inactive look.",
+      "name": "Veil",
+      "whatItDoes": "Covers the map in black wherever the team has no sight.",
       "details": [
-        "Tabs widen to fit their names, and squeeze down when the bar fills up."
+        "Solid black where never discovered, 0.5 opacity where discovered.",
+        "No veil where there is sight.",
+        "Its edges are blocky, hard-edged square cells that match the pixel art.",
+        "The screen UI, such as the Terminal button and Terminal, draws over the veil."
       ]
     },
     {
       "id": "F-3",
-      "name": "Red button",
-      "whatItDoes": "Red square in the left corner of the top strip; closes the Terminal, same as Esc.",
+      "name": "Snapshot",
+      "whatItDoes": "Keeps showing discovered areas as they looked when last seen.",
       "details": [
-        "Bright at rest, dim while hovered, with a darker center pixel in both."
+        "Under the 0.5 veil, the ground, trees and walls show as last seen, even if they have since been cut, built or destroyed.",
+        "Npcs, arrows and dropped items do not show under the 0.5 veil.",
+        "A spot's snapshot updates as soon as the team has sight of it again.",
+        "Your own wall plans, crosses and path lines follow the same veil rules, so they can be hidden."
       ]
     },
     {
       "id": "F-4",
-      "name": "- button",
-      "whatItDoes": "Closes the currently selected file; drawn right after the selected tab.",
+      "name": "Script find",
+      "whatItDoes": "Makes an npc script's find search what the team knows, instead of a range around the npc.",
       "details": [
-        "Closes the tab only; the file stays on disk and its tab returns the next time the Terminal opens.",
-        "Unsaved edits stay in memory and are back when the tab returns.",
-        "White at rest, light grey while hovered."
+        "It searches live things in sight plus the snapshot of discovered areas.",
+        "Never-discovered areas return nothing.",
+        "Things that are not in snapshots, such as dropped items, are found only in sight.",
+        "If a found thing is gone on arrival, the snapshot has already updated and the next find picks something else."
       ]
     },
     {
       "id": "F-5",
-      "name": "+ button",
-      "whatItDoes": "Creates a new script; drawn right after the last tab.",
+      "name": "Orders in the veil",
+      "whatItDoes": "Lets mouse orders go anywhere, whatever the veil shows.",
       "details": [
-        "Opens a new tab with an editable name; Enter creates the .txt file, Esc cancels.",
-        "White at rest, light grey while hovered."
+        "Npcs can be sent into dim or solid black.",
+        "Walls can be planned in dim or solid black."
       ]
     },
     {
       "id": "F-6",
-      "name": "Numbered rows",
-      "whatItDoes": "Shows script lines with two-digit numbers.",
+      "name": "Dev key",
+      "whatItDoes": "A key toggles the veil off on screen for testing, like the existing dev view keys.",
       "details": [
-        "Text uses the original font.",
-        "Text scales separately from the art, so a row holds about 45 characters.",
-        "Plain text is black; other syntax colors are unchanged for now.",
-        "As many rows as fit show; the wheel and the cursor scroll through longer scripts.",
-        "A space between words is half a character wide; indent spaces at the start of a line stay full width."
-      ]
-    },
-    {
-      "id": "F-7",
-      "name": "Scrollbars",
-      "whatItDoes": "Scroll the script up and down and long lines sideways.",
-      "details": [
-        "Hidden until the lines or the longest line no longer fit.",
-        "A thumb's length follows the share of the script on screen, so it resizes as the file grows.",
-        "The wheel scrolls, a thumb can be dragged, and clicking a track jumps there."
-      ]
-    },
-    {
-      "id": "F-8",
-      "name": "Autocomplete list",
-      "whatItDoes": "Shows suggestions for the word being typed, in the Terminal's look.",
-      "details": [
-        "A 1 pixel navy edge and a white body.",
-        "Suggestions keep their syntax colors; the picked row sits on light grey."
-      ]
-    },
-    {
-      "id": "F-9",
-      "name": "Terminal button",
-      "whatItDoes": "An icon button on the game screen that opens the Terminal when clicked.",
-      "details": [
-        "Uses assets/ui/icon/terminal-icon.png, scaled by a whole number.",
-        "Its top sits 25% down the screen, 12 points from the left edge.",
-        "Drawn over the map and under the Terminal; a click on it never reaches the map."
+        "Sight, snapshots and script find keep working the same underneath."
       ]
     }
   ],
   "flows": [
     {
-      "name": "Edit and save a script",
+      "name": "Scout the map",
       "steps": [
-        "Press Shift+1; the Terminal opens with one tab per script.",
-        "Click a tab, or the rows, to place the cursor, and type.",
-        "Save with Ctrl or Cmd+S; saved or the parse error shows in the top strip.",
-        "Click the red button or press Esc to close."
-      ]
-    },
-    {
-      "name": "Create a new script",
-      "steps": [
-        "Click +; a new tab appears with an editable name.",
-        "Type the name and press Enter; the .txt file is created.",
-        "Or press Esc to cancel, and no file is made."
-      ]
-    },
-    {
-      "name": "Close a tab",
-      "steps": [
-        "Select a tab; the - button sits right after it.",
-        "Click -; the tab closes, the file stays on disk, and unsaved edits stay in memory.",
-        "Reopen the Terminal; the tab is back with those edits."
+        "The game starts with sight around the team's npcs and solid black everywhere else.",
+        "Send an npc into the black; the area inside its view field clears and shows the current state.",
+        "The npc walks on; the area it left stays discovered, at 0.5 opacity, showing the snapshot.",
+        "An npc returns; the veil clears and the snapshot updates to the current state."
       ]
     }
   ],
   "examples": [
     {
-      "situation": "A script is longer than the rows that fit and the cursor moves past the last visible row.",
-      "whatHappens": "The rows scroll to keep the cursor in view."
+      "situation": "A tree was seen, the npc left, and an enemy cut the tree down.",
+      "whatHappens": "The tree still shows under the 0.5 veil. Once sight returns, it disappears."
     },
     {
-      "situation": "Every tab is closed with -.",
-      "whatHappens": "The panel shows blank rows with only the red and + buttons, and typing does nothing."
+      "situation": "A script's find picks a remembered tree, and the npc arrives to find it gone.",
+      "whatHappens": "The snapshot updates as the spot comes into sight, so the next find picks something else."
     },
     {
-      "situation": "A script with a parse error is saved.",
-      "whatHappens": "The file is written, as today, and the error shows in the dark top strip."
+      "situation": "An enemy npc walks through a discovered area with no sight on it.",
+      "whatHappens": "It does not show. Only the snapshot shows, under the 0.5 veil."
+    },
+    {
+      "situation": "A wall is planned in solid black.",
+      "whatHappens": "The plan is made but does not show, and script find does not see it until an npc on the team has sight of it."
+    },
+    {
+      "situation": "The only npc in an area dies.",
+      "whatHappens": "That area goes straight to discovered, at 0.5 opacity, with its snapshot."
     }
   ],
   "leftOut": [
-    "New syntax colors beyond black plain text; to be tweaked later.",
-    "Deleting script files from the Terminal.",
-    "Switching to font.ttf; text stays in the original font."
+    "Sight blocked by trees or walls.",
+    "Sight from walls or other objects.",
+    "A minimap."
   ],
   "decisions": [
     {
       "id": "D-1",
-      "decision": "The Terminal is 128x96 reference pixels, scaled up; the drawn 120x87 mock-up is resized to match the labels.",
-      "date": "2026-10-29"
+      "decision": "A team's npcs, the player's and allies', share sight, discovered areas and snapshots.",
+      "date": "2026-10-30"
     },
     {
       "id": "D-2",
-      "decision": "A new - button closes the currently selected file.",
-      "date": "2026-10-29"
+      "decision": "The view field and script find share one setting: the view field radius is 1000 map px, and find no longer has a range limit.",
+      "date": "2026-10-30"
     },
     {
       "id": "D-3",
-      "decision": "The + button creates a new script.",
-      "date": "2026-10-29"
+      "decision": "Script find searches sight plus the discovered snapshot, so a found object might be gone on arrival; the next find then picks something else.",
+      "reason": "The user said a discovered area is only a snapshot of that moment.",
+      "date": "2026-10-30"
     },
     {
       "id": "D-4",
-      "decision": "Text stays in the original font, the SDL debug font.",
-      "date": "2026-10-29"
+      "decision": "Under the 0.5 veil, ground, trees and walls show as last seen; npcs, arrows and items do not show.",
+      "date": "2026-10-30"
     },
     {
       "id": "D-5",
-      "decision": "The red button closes the Terminal, same as Esc. The red, - and + buttons sit in their bright look and go dim while hovered.",
-      "date": "2026-10-29"
+      "decision": "The veil's edges are blocky square cells with hard edges.",
+      "date": "2026-10-30"
     },
     {
       "id": "D-6",
-      "decision": "The - button closes the tab only; the file stays on disk and its tab returns the next time the Terminal opens.",
-      "date": "2026-10-29"
+      "decision": "Mouse orders, walking and wall plans alike, can go anywhere, including into solid black.",
+      "date": "2026-10-30"
     },
     {
       "id": "D-7",
-      "decision": "Text is smaller than the art: art and text scale separately, so a row holds about 45 characters.",
-      "date": "2026-10-29"
+      "decision": "Sight is a plain circle; trees and walls do not block it.",
+      "date": "2026-10-30"
     },
     {
       "id": "D-8",
-      "decision": "Plain text changes from white to black; every other text color stays as it is for now, to be tweaked later.",
-      "date": "2026-10-29"
+      "decision": "Your own wall plans, crosses and path lines follow the veil rules, and are not drawn over it.",
+      "date": "2026-10-30"
     },
     {
       "id": "D-9",
-      "decision": "The panel shows about 6 rows of 12 reference pixels and scrolls through longer scripts with the wheel and the cursor.",
-      "date": "2026-10-29"
+      "decision": "A dev key toggles the veil off on screen; sight and find keep working underneath.",
+      "date": "2026-10-30"
     },
     {
       "id": "D-10",
-      "decision": "Saved and parse error messages show in the dark top strip, as light text.",
-      "date": "2026-10-29"
-    },
-    {
-      "id": "D-11",
-      "decision": "The + button opens a new tab with an editable name; Enter creates the .txt file, Esc cancels.",
-      "date": "2026-10-29"
-    },
-    {
-      "id": "D-12",
-      "decision": "Tabs widen to fit their names, and squeeze down when the bar fills up.",
-      "date": "2026-10-29"
-    },
-    {
-      "id": "D-13",
-      "decision": "The panel uses the largest whole-number scale that fits inside 80% of the window, centered.",
-      "date": "2026-10-29"
-    },
-    {
-      "id": "D-14",
-      "decision": "Unsaved edits stay in memory when the - button closes a tab, and are back when the tab returns.",
-      "date": "2026-10-29"
-    },
-    {
-      "id": "D-15",
-      "decision": "After the last tab closes, the panel shows blank rows with only the red and + buttons; typing does nothing.",
-      "date": "2026-10-29"
-    },
-    {
-      "id": "D-16",
-      "decision": "The autocomplete popup keeps its current look; the user will add its new look later.",
-      "date": "2026-10-29"
-    },
-    {
-      "id": "D-17",
-      "decision": "Replaces D-9: the dash-dot dividers are gone and rows are tight, one glyph plus 2 text pixels tall, so as many rows as fit show and longer scripts still scroll.",
-      "reason": "The user asked to delete the dividing line and shrink the gaps after seeing the build.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-18",
-      "decision": "The red button moves into the left corner of a 5 pixel top strip with no navy tile, tabs start at the panel's left edge, and a 2 pixel light band sits under the tab bar.",
-      "reason": "The user edited the reference.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-19",
-      "decision": "Replaces D-17's row height: rows are 4 reference pixels tall, from 2 pixels below the light band; the dashed mark in the reference is a height guide and is not drawn.",
-      "reason": "The user updated the reference and confirmed the mark is a guide.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-20",
-      "decision": "Both scrollbars work, by wheel and thumb drag, are hidden by default, and resize their thumbs with the file.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-21",
-      "decision": "Replaces D-1's fixed size: the Terminal panel is resizable by dragging its edges; 128x96 is its starting size. 'Window' here means the Terminal panel, since the game runs fullscreen.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-22",
-      "decision": "Dragging the dark top strip moves the Terminal panel, keeping it fully on screen.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-23",
-      "decision": "Replaces D-19's row height: the gap between rows is half of what a 4 reference pixel row leaves.",
-      "reason": "The user found the space too big and asked for half size.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-24",
-      "decision": "In script rows, a space after a line's first word is half a character wide; indent spaces stay full width so blocks line up.",
-      "reason": "The user found the space between words too big and asked for half size.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-25",
-      "decision": "Replaces D-5's hover for - and +, which now have one white look; only the red button dims on hover. The tab bar is 7 pixels tall with 3 white rows, the - and + glyphs are 3 pixels wide, the red square has a darker center, rows start 4 pixels below the band, and the vertical thumb is inset 4 pixels at its top.",
-      "reason": "The user updated the reference.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-26",
-      "decision": "Replaces D-16: the autocomplete list follows the reference, with a navy edge, a light top band and a white body. The picked row uses light grey, which the reference does not show.",
-      "reason": "The user added the list to the reference.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-27",
-      "decision": "Replaces D-26's top band: the autocomplete list has no shadow row, only a navy edge and a white body.",
-      "reason": "The user deleted the shadow in the reference.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-28",
-      "decision": "Replaces D-25's single look for - and +: their glyphs are white at rest and light grey #d9d9d9 while hovered.",
-      "reason": "The user added the hover looks to the reference.",
-      "date": "2026-10-30"
-    },
-    {
-      "id": "D-29",
-      "decision": "A Terminal icon button sits at the left of the game screen, 25% from the top, with a gap from the left edge, and a click opens the Terminal.",
+      "decision": "project.spec.json is the fog of war spec; the finished Terminal spec moved to docs/specs/terminal.spec.json.",
       "date": "2026-10-30"
     }
   ],
   "assumptions": [
     {
-      "statement": "Shift+1 still opens the Terminal alongside the button, Esc still closes it, and saving, autocomplete and the parse check keep working."
+      "statement": "The game has no teams yet, only a player index, so the screen shows P1's veil and each player is their own team until allies exist."
+    },
+    {
+      "statement": "A veil cell is one tile, 10 map px."
+    },
+    {
+      "statement": "The dev key is V, which is unused today."
+    },
+    {
+      "statement": "Other players' scripts use their own team's knowledge through the same find rules."
     }
   ],
   "openQuestions": []
