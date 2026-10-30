@@ -1205,9 +1205,11 @@ int main(int, char**)
                 wantedCursor = pointCursor;
                 break;
             }
+            const SDL_FRect button = terminalButtonRect(viewport);
+            if (mouse.x >= button.x && mouse.x < button.x + button.w && mouse.y >= button.y && mouse.y < button.y + button.h) wantedCursor = pointCursor;
         }
         if (wantedCursor && SDL_GetCursor() != wantedCursor) SDL_SetCursor(wantedCursor);
-        // ui-cursor: the pointer shows what a click will do; a view drag shows the closed hand, a box select or a visible npc under the cursor shows the pointing hand and anything else the open hand, while over the Terminal the cursor is left alone so its resize cursors keep working
+        // ui-cursor: the pointer shows what a click will do; a view drag shows the closed hand, a box select, a visible npc or the Terminal icon under the cursor shows the pointing hand and anything else the open hand, while over the Terminal the cursor is left alone so its resize cursors keep working
 
         for (Footprint& print : footprints) print.age += deltaTime;
         std::erase_if(footprints, [](const Footprint& print) { return print.age >= footprintLife; });

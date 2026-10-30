@@ -41,7 +41,7 @@
       "details": [
         "grab-open is the default.",
         "grab-close shows during a view drag.",
-        "point shows during a box select, and over an npc that is on screen and not hidden by the veil, except during a view drag."
+        "point shows during a box select, over the Terminal icon, and over an npc that is on screen and not hidden by the veil, except during a view drag."
       ]
     }
   ],
@@ -110,7 +110,7 @@
     },
     {
       "id": "D-6",
-      "decision": "The cursor is grab-open by default, grab-close on Shift + left, and point over an npc or during a box select.",
+      "decision": "The cursor is grab-open by default, grab-close on Shift + left, and point over an npc, over the Terminal icon or during a box select.",
       "date": "2026-10-30"
     }
   ],
